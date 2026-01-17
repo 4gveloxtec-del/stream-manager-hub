@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabaseExternal as supabase } from '@/lib/supabase-external';
+// Usa o Supabase externo APENAS para tabelas de WhatsApp
+import { supabaseWhatsApp as supabase } from '@/lib/supabase-external';
 
 interface WhatsAppConfig {
   id?: string;

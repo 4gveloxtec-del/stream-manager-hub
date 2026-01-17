@@ -5,6 +5,7 @@ import { useFingerprint } from '@/hooks/useFingerprint';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { useOfflineClients } from '@/hooks/useOfflineClients';
 import { useSentMessages } from '@/hooks/useSentMessages';
+import { useRenewalMutation } from '@/hooks/useRenewalMutation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -147,6 +148,7 @@ export default function Clients() {
   const { isPrivacyMode, maskData } = usePrivacyMode();
   const { isOffline, lastSync, syncClients: syncOfflineClients, loading: offlineLoading } = useOfflineClients();
   const { isSent, getSentInfo, clearSentMark, sentCount, clearAllSentMarks } = useSentMessages();
+  const { renewClient: executeRenewal, isRenewing, isPending: isRenewalPending, calculateNewExpiration } = useRenewalMutation(user?.id);
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
@@ -1125,61 +1127,7 @@ export default function Clients() {
     },
   });
 
-  const renewMutation = useMutation({
-    mutationFn: async ({ id, days }: { id: string; days: number }) => {
-      const client = clients.find(c => c.id === id);
-      if (!client) throw new Error('Cliente não encontrado');
-      
-      const baseDate = new Date(client.expiration_date);
-      const newDate = isAfter(baseDate, new Date()) 
-        ? addDays(baseDate, days) 
-        : addDays(new Date(), days);
-      
-      const { error } = await supabase
-        .from('clients')
-        .update({ 
-          expiration_date: format(newDate, 'yyyy-MM-dd'),
-          is_paid: true,
-          renewed_at: new Date().toISOString()
-        })
-        .eq('id', id);
-      if (error) throw error;
-      
-      return { id, newDate: format(newDate, 'yyyy-MM-dd') };
-    },
-    onMutate: async ({ id, days }) => {
-      await queryClient.cancelQueries({ queryKey: ['clients'] });
-      const previousClients = queryClient.getQueryData<Client[]>(['clients', user?.id]);
-      
-      const client = previousClients?.find(c => c.id === id);
-      if (client && previousClients) {
-        const baseDate = new Date(client.expiration_date);
-        const newDate = isAfter(baseDate, new Date()) 
-          ? addDays(baseDate, days) 
-          : addDays(new Date(), days);
-        
-        queryClient.setQueryData<Client[]>(['clients', user?.id], (old) => 
-          old?.map(c => 
-            c.id === id 
-              ? { ...c, expiration_date: format(newDate, 'yyyy-MM-dd'), is_paid: true }
-              : c
-          ) || []
-        );
-      }
-      
-      return { previousClients };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      toast.success('Cliente renovado com sucesso! ✅');
-    },
-    onError: (error: Error, _variables, context) => {
-      if (context?.previousClients) {
-        queryClient.setQueryData(['clients', user?.id], context.previousClients);
-      }
-      toast.error(error.message);
-    },
-  });
+  // renewMutation is now replaced by useRenewalMutation hook
 
   const resetForm = () => {
     setFormData({
@@ -1473,37 +1421,27 @@ export default function Clients() {
     setRenewPlanId(client.plan_id || '');
   };
 
-  const confirmRenew = () => {
-    if (!renewClient) return;
+  const confirmRenew = async () => {
+    if (!renewClient || isRenewing) return;
     
     const selectedPlan = plans.find(p => p.id === renewPlanId);
     const days = selectedPlan?.duration_days || 30;
     
-    // Update client with new plan info if changed
-    const updateData: Record<string, unknown> = {};
-    if (renewPlanId && renewPlanId !== renewClient.plan_id) {
-      updateData.plan_id = selectedPlan?.id || null;
-      updateData.plan_name = selectedPlan?.name || null;
-      updateData.plan_price = selectedPlan?.price || null;
-    }
-    
-    // Calculate new expiration date
-    const baseDate = new Date(renewClient.expiration_date);
-    const newDate = isAfter(baseDate, new Date()) 
-      ? addDays(baseDate, days) 
-      : addDays(new Date(), days);
-    
-    updateData.expiration_date = format(newDate, 'yyyy-MM-dd');
-    updateData.is_paid = true;
-    updateData.renewed_at = new Date().toISOString(); // Track renewal date for monthly profit
-    
-    updateMutation.mutate({ 
-      id: renewClient.id, 
-      data: updateData as Partial<Client>
-    });
-    
+    // Close dialog immediately for better UX
+    const clientToRenew = renewClient;
     setRenewClient(null);
     setRenewPlanId('');
+    
+    // Execute renewal with the robust hook
+    await executeRenewal({
+      clientId: clientToRenew.id,
+      clientName: clientToRenew.name,
+      currentExpirationDate: clientToRenew.expiration_date,
+      durationDays: days,
+      planId: renewPlanId !== clientToRenew.plan_id ? selectedPlan?.id || null : undefined,
+      planName: renewPlanId !== clientToRenew.plan_id ? selectedPlan?.name || null : undefined,
+      planPrice: renewPlanId !== clientToRenew.plan_id ? selectedPlan?.price || null : undefined,
+    });
   };
 
   const handleOpenPanel = (client: Client) => {
@@ -3356,7 +3294,13 @@ export default function Clients() {
                       variant="outline"
                       size="sm"
                       className="h-7 text-xs"
-                      onClick={() => renewMutation.mutate({ id: client.id, days: 1 })}
+                      disabled={isRenewing}
+                      onClick={() => executeRenewal({
+                        clientId: client.id,
+                        clientName: client.name,
+                        currentExpirationDate: client.expiration_date,
+                        durationDays: 1,
+                      })}
                     >
                       +1 dia
                     </Button>
@@ -3573,11 +3517,18 @@ export default function Clients() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRenewClient(null)}>
+            <Button variant="outline" onClick={() => setRenewClient(null)} disabled={isRenewing}>
               Cancelar
             </Button>
-            <Button onClick={confirmRenew} disabled={!renewPlanId || updateMutation.isPending}>
-              Renovar
+            <Button onClick={confirmRenew} disabled={!renewPlanId || isRenewing || isRenewalPending}>
+              {isRenewing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Renovando...
+                </>
+              ) : (
+                'Renovar'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

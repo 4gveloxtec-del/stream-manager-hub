@@ -54,6 +54,7 @@ import { LazyPremiumAccounts } from '@/components/LazyPremiumAccounts';
 import { PaginationControls } from '@/components/PaginationControls';
 import { BulkLoyaltyMessage } from '@/components/BulkLoyaltyMessage';
 import { ExpirationDaySummary } from '@/components/ExpirationDaySummary';
+import { useResellerApps } from '@/components/ResellerAppsManager';
 
 // Interface for MAC devices
 interface MacDevice {
@@ -97,6 +98,9 @@ interface Client {
   renewed_at: string | null;
   gerencia_app_mac: string | null;
   gerencia_app_devices: MacDevice[] | null;
+  // App type fields
+  app_name: string | null;
+  app_type: string | null;
 }
 
 interface ClientCategory {
@@ -333,6 +337,9 @@ export default function Clients() {
   });
 
   const allCategories = [...DEFAULT_CATEGORIES, ...customProducts.map(p => p.name), ...customCategories.map(c => c.name)];
+
+  // Fetch reseller apps (custom apps created by the reseller)
+  const { data: resellerApps = [] } = useResellerApps(user?.id);
 
   // Fetch templates for bulk loyalty messages
   const { data: templates = [] } = useQuery({
@@ -2095,27 +2102,62 @@ export default function Clients() {
                   </div>
                 )}
 
-                {/* App Type - Server app or own app (only for IPTV) */}
+                {/* App Type - Server app or reseller apps (only for IPTV/P2P) */}
                 {(formData.category === 'IPTV' || formData.category === 'P2P') && (
                   <div className="space-y-2">
                     <Label>Tipo de Aplicativo</Label>
                     <Select
                       value={formData.app_type}
-                      onValueChange={(v: 'server' | 'own') => setFormData({ ...formData, app_type: v })}
+                      onValueChange={(v) => {
+                        // If selecting a reseller app (starts with 'reseller_'), set the app_name too
+                        if (v.startsWith('reseller_')) {
+                          const appName = v.replace('reseller_', '');
+                          setFormData({ ...formData, app_type: 'own', app_name: appName });
+                        } else {
+                          setFormData({ ...formData, app_type: v as 'server' | 'own', app_name: v === 'server' ? '' : formData.app_name });
+                        }
+                      }}
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="Selecione o tipo de app" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="server">App do Servidor</SelectItem>
-                        <SelectItem value="own">App Próprio (Revendedor)</SelectItem>
+                        <SelectItem value="server">📡 App do Servidor</SelectItem>
+                        {resellerApps.length > 0 && (
+                          <>
+                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                              Meus Apps (Revendedor)
+                            </div>
+                            {resellerApps.map((app) => (
+                              <SelectItem key={app.id} value={`reseller_${app.name}`}>
+                                {app.icon} {app.name}
+                              </SelectItem>
+                            ))}
+                          </>
+                        )}
+                        <SelectItem value="own">📱 Outro App (Personalizado)</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
                       {formData.app_type === 'server' 
-                        ? 'Cliente usa o aplicativo fornecido pelo servidor.' 
-                        : 'Cliente usa um app personalizado do revendedor.'}
+                        ? 'Cliente usa o aplicativo fornecido pelo servidor.'
+                        : formData.app_name 
+                          ? `Cliente usa: ${formData.app_name}`
+                          : 'Cliente usa um app personalizado do revendedor.'}
                     </p>
+                    
+                    {/* Show input for custom app name when 'own' is selected but no reseller app chosen */}
+                    {formData.app_type === 'own' && !resellerApps.some(a => a.name === formData.app_name) && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">Nome do Aplicativo</Label>
+                        <Input
+                          value={formData.app_name}
+                          onChange={(e) => setFormData({ ...formData, app_name: e.target.value })}
+                          placeholder="Ex: IPTV Smarters, Sparkle TV..."
+                          className="h-9"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3162,6 +3204,14 @@ export default function Clients() {
                             </span>
                           );
                         })()}
+                        
+                        {/* App do Revendedor Badge */}
+                        {client.app_type === 'own' && client.app_name && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                            <Smartphone className="h-3 w-3" />
+                            {client.app_name}
+                          </span>
+                        )}
                       </div>
                     )}
 

@@ -29,7 +29,7 @@ import {
   Monitor,
   ExternalLink,
 } from 'lucide-react';
-import { LayoutGrid, Trash2 } from 'lucide-react';
+import { LayoutGrid, Trash2, Smartphone } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ThemeSelector } from '@/components/ThemeSelector';
@@ -38,6 +38,7 @@ import { InstallPWA } from '@/components/InstallPWA';
 import { usePWA } from '@/hooks/usePWA';
 import { NotificationSettings } from '@/components/NotificationSettings';
 import { cn } from '@/lib/utils';
+import { ResellerAppsManager } from '@/components/ResellerAppsManager';
 
 // Setting item component for mobile-like appearance
 function SettingItem({ 
@@ -693,7 +694,15 @@ export default function Settings() {
         </div>
       </SettingSection>
 
-      {/* Appearance Section - Admin Only */}
+      {/* Reseller Apps Section - For all sellers */}
+      {user && !isAdmin && (
+        <SettingSection title="Meus Aplicativos">
+          <div className="p-4">
+            <ResellerAppsManager sellerId={user.id} />
+          </div>
+        </SettingSection>
+      )}
+
       {isAdmin && (
         <SettingSection title="Administração">
           <SettingItem

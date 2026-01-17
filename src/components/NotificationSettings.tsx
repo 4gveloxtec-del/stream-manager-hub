@@ -1,4 +1,4 @@
-import { Bell, BellOff, Loader2, AlertTriangle, CheckCircle2, Info, Smartphone, Globe, Send } from 'lucide-react';
+import { Bell, BellOff, Loader2, AlertTriangle, CheckCircle2, Info, Smartphone, Globe, Send, Calendar } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -11,7 +11,9 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { Slider } from '@/components/ui/slider';
+import { Label } from '@/components/ui/label';
 
 export function NotificationSettings() {
   const {
@@ -26,9 +28,71 @@ export function NotificationSettings() {
     lastError,
   } = usePushNotifications();
   
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const [showDetails, setShowDetails] = useState(false);
   const [isSendingTest, setIsSendingTest] = useState(false);
+  const [notificationDays, setNotificationDays] = useState(3);
+  const [isSavingDays, setIsSavingDays] = useState(false);
+  const [hasLoadedDays, setHasLoadedDays] = useState(false);
+
+  // Load notification days preference from database
+  useEffect(() => {
+    const loadNotificationDays = async () => {
+      if (!user?.id) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        
+        if (!error && data) {
+          const profile = data as any;
+          if (profile.notification_days_before !== null && profile.notification_days_before !== undefined) {
+            setNotificationDays(profile.notification_days_before);
+          }
+        }
+        setHasLoadedDays(true);
+      } catch (error) {
+        console.error('Error loading notification days:', error);
+        setHasLoadedDays(true);
+      }
+    };
+
+    loadNotificationDays();
+  }, [user?.id]);
+
+  const handleDaysChange = async (value: number[]) => {
+    const newDays = value[0];
+    setNotificationDays(newDays);
+  };
+
+  const saveDaysPreference = async () => {
+    if (!user?.id) return;
+    
+    setIsSavingDays(true);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ notification_days_before: notificationDays } as any)
+        .eq('id', user.id);
+      
+      if (error) throw error;
+      
+      // Also save to localStorage for quick access
+      localStorage.setItem('notification_days_before', String(notificationDays));
+      
+      toast.success('Preferência salva!', {
+        description: `Você será notificado ${notificationDays} dia(s) antes do vencimento.`
+      });
+    } catch (error) {
+      console.error('Error saving notification days:', error);
+      toast.error('Erro ao salvar preferência');
+    } finally {
+      setIsSavingDays(false);
+    }
+  };
 
   const handleToggle = async (checked: boolean) => {
     if (!isSupported) {
@@ -290,6 +354,60 @@ export function NotificationSettings() {
         </div>
       )}
       
+      {/* Notification Days Configuration */}
+      {isSubscribed && hasLoadedDays && (
+        <div className="p-4 rounded-lg bg-muted/50 border border-border space-y-4">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <Label className="text-sm font-medium">Antecedência das Notificações</Label>
+          </div>
+          
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">
+                Notificar {notificationDays} dia(s) antes
+              </span>
+              <span className="text-xs text-muted-foreground">
+                1 - 7 dias
+              </span>
+            </div>
+            
+            <Slider
+              value={[notificationDays]}
+              onValueChange={handleDaysChange}
+              min={1}
+              max={7}
+              step={1}
+              className="w-full"
+            />
+            
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>1 dia</span>
+              <span>7 dias</span>
+            </div>
+            
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={saveDaysPreference}
+              disabled={isSavingDays}
+            >
+              {isSavingDays ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 mr-2" />
+              )}
+              Salvar Preferência
+            </Button>
+          </div>
+          
+          <p className="text-xs text-muted-foreground">
+            Aplica-se a contas a pagar e clientes vencendo.
+          </p>
+        </div>
+      )}
+
       {/* Browser compatibility details */}
       <Collapsible open={showDetails} onOpenChange={setShowDetails}>
         <CollapsibleTrigger asChild>

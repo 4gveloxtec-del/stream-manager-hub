@@ -1,10 +1,11 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { differenceInDays, startOfToday } from 'date-fns';
 
 const LAST_BILLS_CHECK_KEY = 'last_bills_notification_check';
 const NOTIFICATION_PREF_KEY = 'push_notifications_enabled';
+const NOTIFICATION_DAYS_KEY = 'notification_days_before';
 
 interface Bill {
   id: string;
@@ -16,6 +17,39 @@ interface Bill {
 
 export function useBillsNotifications() {
   const { user, isSeller } = useAuth();
+  const [notificationDays, setNotificationDays] = useState(3);
+
+  // Load notification days preference
+  useEffect(() => {
+    const loadDays = async () => {
+      // First check localStorage for quick access
+      const cachedDays = localStorage.getItem(NOTIFICATION_DAYS_KEY);
+      if (cachedDays) {
+        setNotificationDays(parseInt(cachedDays, 10));
+      }
+
+      // Then load from database
+      if (user?.id) {
+        try {
+          const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+          
+          const profile = data as any;
+          if (profile?.notification_days_before !== null && profile?.notification_days_before !== undefined) {
+            setNotificationDays(profile.notification_days_before);
+            localStorage.setItem(NOTIFICATION_DAYS_KEY, String(profile.notification_days_before));
+          }
+        } catch (error) {
+          console.error('Error loading notification days:', error);
+        }
+      }
+    };
+
+    loadDays();
+  }, [user?.id]);
 
   const isNotificationsEnabled = useCallback(() => {
     if (!('Notification' in window)) return false;
@@ -42,6 +76,12 @@ export function useBillsNotifications() {
     const tomorrowList = bills.filter(b => 
       differenceInDays(new Date(b.due_date), today) === 1
     );
+
+    // Contas próximas (dentro do período configurado, excluindo hoje e amanhã)
+    const upcomingList = bills.filter(b => {
+      const days = differenceInDays(new Date(b.due_date), today);
+      return days > 1 && days <= notificationDays;
+    });
 
     // Contas vencidas - prioridade máxima
     if (overdueList.length > 0) {
@@ -83,7 +123,20 @@ export function useBillsNotifications() {
         tag: 'bills-tomorrow',
       });
     }
-  }, [isNotificationsEnabled]);
+
+    // Contas próximas (dentro do período configurado)
+    if (upcomingList.length > 0 && overdueList.length === 0 && todayList.length === 0 && tomorrowList.length === 0) {
+      const totalUpcoming = upcomingList.reduce((sum, b) => sum + b.amount, 0);
+      const descriptions = upcomingList.slice(0, 3).map(b => b.description).join(', ');
+      const extra = upcomingList.length > 3 ? ` +${upcomingList.length - 3}` : '';
+      
+      new Notification(`📅 Contas nos próximos ${notificationDays} dias`, {
+        body: `${descriptions}${extra}\nTotal: R$ ${totalUpcoming.toFixed(2)}`,
+        icon: '/icon-192.png',
+        tag: 'bills-upcoming',
+      });
+    }
+  }, [isNotificationsEnabled, notificationDays]);
 
   const checkBills = useCallback(async () => {
     if (!user?.id || !isSeller) return;
@@ -109,8 +162,8 @@ export function useBillsNotifications() {
       const pendingBills = (bills || []).filter(b => {
         if (!b.due_date || !b.amount) return false;
         const days = differenceInDays(new Date(b.due_date), todayDate);
-        // Incluir atrasados (negativos), hoje (0), e amanhã (1)
-        return days <= 1;
+        // Incluir atrasados (negativos) e contas dentro do período configurado
+        return days <= notificationDays;
       }) as Bill[];
 
       if (pendingBills.length > 0) {
@@ -120,7 +173,7 @@ export function useBillsNotifications() {
     } catch (error) {
       console.error('Error checking bills:', error);
     }
-  }, [user?.id, isSeller, isNotificationsEnabled, showBillsNotification]);
+  }, [user?.id, isSeller, isNotificationsEnabled, showBillsNotification, notificationDays]);
 
   // Verificar ao montar e a cada hora
   useEffect(() => {

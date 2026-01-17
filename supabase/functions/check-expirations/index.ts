@@ -163,29 +163,42 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get today and next 3 days dates
+    // Get all profiles with their notification preferences
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, notification_days_before');
+    
+    const notificationDaysMap: Record<string, number> = {};
+    for (const profile of profilesData || []) {
+      notificationDaysMap[profile.id] = profile.notification_days_before ?? 3;
+    }
+    
+    // Get maximum notification days to fetch all potentially relevant data
+    const maxDays = Math.max(...Object.values(notificationDaysMap), 3);
+
+    // Get today and next X days dates (based on max configured days)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const threeDaysFromNow = new Date(today);
-    threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+    const maxDaysFromNow = new Date(today);
+    maxDaysFromNow.setDate(maxDaysFromNow.getDate() + maxDays);
 
     const todayStr = today.toISOString().split('T')[0];
-    const threeDaysStr = threeDaysFromNow.toISOString().split('T')[0];
+    const maxDaysStr = maxDaysFromNow.toISOString().split('T')[0];
 
-    console.log('[check-expirations] Checking from', todayStr, 'to', threeDaysStr);
+    console.log('[check-expirations] Checking from', todayStr, 'to', maxDaysStr);
 
     // ========== CHECK SELLER SUBSCRIPTIONS ==========
     console.log('[check-expirations] Checking seller subscriptions...');
     
-    // Get sellers with expiring subscriptions (next 3 days)
+    // Get sellers with expiring subscriptions (next max days)
     const { data: expiringSellers, error: sellersError } = await supabase
       .from('profiles')
       .select('id, full_name, email, subscription_expires_at')
       .not('subscription_expires_at', 'is', null)
       .eq('is_permanent', false)
       .gte('subscription_expires_at', today.toISOString())
-      .lte('subscription_expires_at', threeDaysFromNow.toISOString());
+      .lte('subscription_expires_at', maxDaysFromNow.toISOString());
 
     if (sellersError) {
       console.error('[check-expirations] Error fetching expiring sellers:', sellersError);
@@ -207,6 +220,17 @@ serve(async (req) => {
 
         if (!sellerSub || sellerSub.length === 0) {
           console.log(`[check-expirations] Seller ${seller.email} has no push subscription`);
+          continue;
+        }
+
+        // Check if this seller should receive notification based on their preference
+        const sellerDays = notificationDaysMap[seller.id] ?? 3;
+        const expDate = new Date(seller.subscription_expires_at);
+        expDate.setHours(0, 0, 0, 0);
+        const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (diffDays > sellerDays && diffDays > 0) {
+          console.log(`[check-expirations] Skipping seller ${seller.email} - ${diffDays} days left, preference is ${sellerDays}`);
           continue;
         }
 
@@ -254,7 +278,7 @@ serve(async (req) => {
       .from('clients')
       .select('id, name, expiration_date, seller_id, phone, plan_name')
       .gte('expiration_date', todayStr)
-      .lte('expiration_date', threeDaysStr)
+      .lte('expiration_date', maxDaysStr)
       .eq('is_archived', false)
       .order('expiration_date');
 
@@ -311,6 +335,7 @@ serve(async (req) => {
       }
 
       let clientsNotified = 0;
+      const sellerDays = notificationDaysMap[sellerId] ?? 3;
 
       // Sort by urgency (expired first, then tomorrow, etc.)
       const sortedClients = clients.sort((a, b) => {
@@ -319,8 +344,15 @@ serve(async (req) => {
         return dateA.getTime() - dateB.getTime();
       });
 
+      // Filter clients based on seller's notification preference
+      const filteredClients = sortedClients.filter(client => {
+        const expDate = new Date(client.expiration_date + 'T00:00:00');
+        const diffDays = Math.ceil((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        return diffDays <= sellerDays;
+      });
+
       // Send individual notification for each client
-      for (const client of sortedClients) {
+      for (const client of filteredClients) {
         const { title, body, urgency } = formatExpirationMessage(client, today);
         
         try {
@@ -373,7 +405,7 @@ serve(async (req) => {
       .select('id, description, recipient_name, amount, due_date, seller_id')
       .eq('is_paid', false)
       .gte('due_date', todayStr)
-      .lte('due_date', threeDaysStr)
+      .lte('due_date', maxDaysStr)
       .order('due_date');
 
     if (billsError) {
@@ -407,12 +439,20 @@ serve(async (req) => {
         
         if (!hasSubscription) continue;
 
-        // Sort by due date
-        const sortedBills = bills.sort((a, b) => {
-          const dateA = new Date(a.due_date);
-          const dateB = new Date(b.due_date);
-          return dateA.getTime() - dateB.getTime();
-        });
+        const sellerDays = notificationDaysMap[sellerId] ?? 3;
+
+        // Sort by due date and filter based on seller's preference
+        const sortedBills = bills
+          .sort((a, b) => {
+            const dateA = new Date(a.due_date);
+            const dateB = new Date(b.due_date);
+            return dateA.getTime() - dateB.getTime();
+          })
+          .filter(bill => {
+            const dueDate = new Date(bill.due_date + 'T00:00:00');
+            const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            return diffDays <= sellerDays;
+          });
 
         for (const bill of sortedBills) {
           const { title, body, urgency } = formatBillMessage(bill, today);

@@ -46,18 +46,34 @@ const CACHE_KEYS = {
 const getCachedData = (userId: string): { profile: Profile | null; role: AppRole | null } => {
   try {
     const cachedUserId = localStorage.getItem(CACHE_KEYS.USER_ID);
-    if (cachedUserId !== userId) {
+    
+    // CRITICAL: If cached user ID doesn't match current user, clear ALL cache
+    // This prevents role bleeding between different users on the same device
+    if (cachedUserId && cachedUserId !== userId) {
+      console.log('[Auth] User changed, clearing stale cache');
+      clearCachedData();
       return { profile: null, role: null };
     }
     
     const profileStr = localStorage.getItem(CACHE_KEYS.PROFILE);
     const roleStr = localStorage.getItem(CACHE_KEYS.ROLE);
     
+    // Validate that cached profile ID matches the user ID
+    if (profileStr) {
+      const profile = JSON.parse(profileStr);
+      if (profile.id !== userId) {
+        console.log('[Auth] Cached profile ID mismatch, clearing cache');
+        clearCachedData();
+        return { profile: null, role: null };
+      }
+    }
+    
     return {
       profile: profileStr ? JSON.parse(profileStr) : null,
       role: roleStr as AppRole | null,
     };
   } catch {
+    clearCachedData();
     return { profile: null, role: null };
   }
 };

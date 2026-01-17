@@ -717,6 +717,7 @@ export type Database = {
           is_active: boolean | null
           is_permanent: boolean | null
           needs_password_update: boolean | null
+          notification_days_before: number | null
           pix_key: string | null
           subscription_expires_at: string | null
           tutorial_visto: boolean | null
@@ -732,6 +733,7 @@ export type Database = {
           is_active?: boolean | null
           is_permanent?: boolean | null
           needs_password_update?: boolean | null
+          notification_days_before?: number | null
           pix_key?: string | null
           subscription_expires_at?: string | null
           tutorial_visto?: boolean | null
@@ -747,6 +749,7 @@ export type Database = {
           is_active?: boolean | null
           is_permanent?: boolean | null
           needs_password_update?: boolean | null
+          notification_days_before?: number | null
           pix_key?: string | null
           subscription_expires_at?: string | null
           tutorial_visto?: boolean | null

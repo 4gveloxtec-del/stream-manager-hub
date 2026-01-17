@@ -71,7 +71,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { title: 'Tutoriais', href: '/tutorials', icon: PlayCircle },
       { title: 'Vendedores', href: '/sellers', icon: UserCog, adminOnly: true },
-      { title: 'Ícones Servidores', href: '/server-icons', icon: Server, adminOnly: true },
+      { title: 'Templates Servidores', href: '/server-templates', icon: Server, adminOnly: true },
       { title: 'Relatórios', href: '/reports', icon: BarChart3, adminOnly: true },
       { title: 'Backup', href: '/backup', icon: Database, adminOnly: true },
       { title: 'Configurações', href: '/settings', icon: Settings },

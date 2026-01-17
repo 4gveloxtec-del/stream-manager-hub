@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -18,7 +18,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { Plus, Server, DollarSign, Edit, Trash2, Coins, ExternalLink, Monitor, Wifi, Calendar, Users, Image, Sparkles, Search, Link } from 'lucide-react';
+import { Plus, Server, DollarSign, Edit, Trash2, Coins, ExternalLink, Monitor, Wifi, Calendar, Users, Image, Sparkles, Search, Link, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ServerCreditClients } from '@/components/ServerCreditClients';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -41,6 +41,13 @@ interface ServerData {
   icon_url: string | null;
 }
 
+interface ServerTemplate {
+  id: string;
+  name: string;
+  name_normalized: string;
+  icon_url: string;
+}
+
 // Helper function to calculate pro-rata price
 const calculateProRataPrice = (monthlyPrice: number, daysUsed: number, totalDays: number = 30): number => {
   if (daysUsed <= 0 || totalDays <= 0) return monthlyPrice;
@@ -49,12 +56,18 @@ const calculateProRataPrice = (monthlyPrice: number, daysUsed: number, totalDays
   return (monthlyPrice / totalDays) * remainingDays;
 };
 
+// Normalize server name for comparison
+const normalizeServerName = (name: string): string => {
+  return name.toLowerCase().replace(/\s+/g, '');
+};
+
 export default function Servers() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<ServerData | null>(null);
   const [creditClientsServer, setCreditClientsServer] = useState<ServerData | null>(null);
+  const [templateApplied, setTemplateApplied] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     monthly_cost: '',
@@ -72,6 +85,79 @@ export default function Servers() {
     icon_url: '',
   });
   const [isGeneratingIcon, setIsGeneratingIcon] = useState(false);
+
+  // Fetch admin server templates (icons and panel URLs)
+  const { data: serverTemplates = [] } = useQuery({
+    queryKey: ['admin-server-templates'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('default_server_icons')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      return data as ServerTemplate[];
+    },
+  });
+
+  // Fetch panel URLs from app_settings
+  const { data: panelUrls = {} } = useQuery({
+    queryKey: ['server-panel-urls'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('key, value')
+        .like('key', 'server_panel_%');
+      if (error) throw error;
+      
+      const urls: Record<string, string> = {};
+      data.forEach(item => {
+        const normalized = item.key.replace('server_panel_', '');
+        urls[normalized] = item.value;
+      });
+      return urls;
+    },
+  });
+
+  // Auto-apply template when name changes
+  const applyTemplateIfAvailable = useCallback((serverName: string) => {
+    if (!serverName.trim() || editingServer) return;
+    
+    const normalized = normalizeServerName(serverName);
+    const template = serverTemplates.find(t => t.name_normalized === normalized);
+    
+    if (template) {
+      const panelUrl = panelUrls[normalized] || '';
+      
+      // Only apply if fields are empty
+      setFormData(prev => ({
+        ...prev,
+        icon_url: prev.icon_url || template.icon_url,
+        panel_url: prev.panel_url || panelUrl,
+      }));
+      
+      if (template.icon_url || panelUrl) {
+        setTemplateApplied(true);
+        toast.success('Template do admin aplicado!', {
+          description: 'Ícone e link preenchidos automaticamente',
+          duration: 2000,
+        });
+      }
+    }
+  }, [serverTemplates, panelUrls, editingServer]);
+
+  // Debounce name changes
+  useEffect(() => {
+    if (!formData.name.trim() || editingServer) {
+      setTemplateApplied(false);
+      return;
+    }
+    
+    const timeout = setTimeout(() => {
+      applyTemplateIfAvailable(formData.name);
+    }, 500);
+    
+    return () => clearTimeout(timeout);
+  }, [formData.name, applyTemplateIfAvailable, editingServer]);
 
   const { data: servers = [], isLoading } = useQuery({
     queryKey: ['servers', user?.id],
@@ -177,6 +263,7 @@ export default function Servers() {
       total_screens_per_credit: '',
       icon_url: '',
     });
+    setTemplateApplied(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -418,13 +505,30 @@ export default function Servers() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="name">Nome *</Label>
+                <Label htmlFor="name" className="flex items-center gap-2">
+                  Nome *
+                  {templateApplied && !editingServer && (
+                    <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Template aplicado
+                    </span>
+                  )}
+                </Label>
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, name: e.target.value });
+                    setTemplateApplied(false);
+                  }}
                   required
+                  placeholder="Digite o nome do servidor"
                 />
+                {!editingServer && serverTemplates.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    💡 Servidores cadastrados pelo admin terão ícone e link preenchidos automaticamente
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="monthly_cost">Custo Mensal (R$)</Label>

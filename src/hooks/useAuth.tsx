@@ -81,11 +81,17 @@ const getCachedData = (userId: string): { profile: Profile | null; role: AppRole
 const setCachedData = (userId: string, profile: Profile | null, role: AppRole | null) => {
   try {
     localStorage.setItem(CACHE_KEYS.USER_ID, userId);
+
     if (profile) {
       localStorage.setItem(CACHE_KEYS.PROFILE, JSON.stringify(profile));
+    } else {
+      localStorage.removeItem(CACHE_KEYS.PROFILE);
     }
+
     if (role) {
       localStorage.setItem(CACHE_KEYS.ROLE, role);
+    } else {
+      localStorage.removeItem(CACHE_KEYS.ROLE);
     }
   } catch {
     // Ignore storage errors
@@ -211,20 +217,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!isMounted) return;
 
-      if (profileResult.data) {
-        setProfile(profileResult.data as Profile);
+      if (profileResult.error) {
+        console.warn('[Auth] Failed to fetch profile:', profileResult.error);
+      }
+      if (roleResult.error) {
+        console.warn('[Auth] Failed to fetch role:', roleResult.error);
       }
 
-      if (roleResult.data) {
-        setRole(roleResult.data.role as AppRole);
-      }
+      const nextProfile = (profileResult.data as Profile | null) ?? null;
+      const nextRole = (roleResult.data?.role as AppRole | null) ?? null;
 
-      // Update cache with fresh data
-      setCachedData(
-        userId,
-        profileResult.data as Profile | null,
-        roleResult.data?.role as AppRole | null
-      );
+      // IMPORTANT: Always overwrite state (and cache) with fresh data,
+      // including null, to prevent stale roles (e.g. admin) from persisting.
+      setProfile(nextProfile);
+      setRole(nextRole);
+
+      // Update cache with fresh data (even when null)
+      setCachedData(userId, nextProfile, nextRole);
     } catch (error) {
       console.error('Error fetching user data:', error);
     } finally {
@@ -235,6 +244,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
+    // Prevent showing stale cached role/profile during a new login
+    clearCachedData();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error as Error | null };
   };

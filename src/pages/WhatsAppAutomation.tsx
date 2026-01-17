@@ -7,22 +7,42 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { 
-  MessageCircle, Settings, Users, AlertTriangle, CheckCircle, Loader2, RefreshCw, Shield
+  MessageCircle, Settings, Users, AlertTriangle, CheckCircle, Loader2, RefreshCw, Shield, Ban
 } from 'lucide-react';
 import { WhatsAppGlobalConfig } from '@/components/WhatsAppGlobalConfig';
 import { WhatsAppSellerConfig } from '@/components/WhatsAppSellerConfig';
 import { ManualMessageSender } from '@/components/ManualMessageSender';
 import { useWhatsAppGlobalConfig } from '@/hooks/useWhatsAppGlobalConfig';
 import { useWhatsAppSellerInstance } from '@/hooks/useWhatsAppSellerInstance';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+
+interface BlockedSeller {
+  id: string;
+  seller_id: string;
+  instance_name: string;
+  instance_blocked: boolean;
+  blocked_at: string | null;
+  blocked_reason: string | null;
+  plan_status: string;
+  profiles?: {
+    full_name: string | null;
+    email: string;
+    whatsapp: string | null;
+    subscription_expires_at: string | null;
+  };
+}
 
 export default function WhatsAppAutomation() {
   const { user, isAdmin } = useAuth();
   const [isRunningAutomation, setIsRunningAutomation] = useState(false);
   const [expiringClients, setExpiringClients] = useState<any[]>([]);
   const [expiringResellers, setExpiringResellers] = useState<any[]>([]);
+  const [blockedSellers, setBlockedSellers] = useState<BlockedSeller[]>([]);
+  const [activeSellers, setActiveSellers] = useState<BlockedSeller[]>([]);
 
   const { config: globalConfig, isApiActive } = useWhatsAppGlobalConfig();
-  const { instance: sellerInstance } = useWhatsAppSellerInstance();
+  const { instance: sellerInstance, isBlocked } = useWhatsAppSellerInstance();
 
   useEffect(() => {
     if (!user?.id) return;
@@ -46,8 +66,38 @@ export default function WhatsAppAutomation() {
         .lte('subscription_expires_at', in7Days.toISOString())
         .eq('is_active', true)
         .then(({ data }) => setExpiringResellers(data || []));
+
+      // Fetch blocked and active sellers (admin only)
+      fetchSellerInstances();
     }
   }, [user?.id, isAdmin]);
+
+  const fetchSellerInstances = async () => {
+    const { data: instances } = await supabase
+      .from('whatsapp_seller_instances')
+      .select(`
+        id,
+        seller_id,
+        instance_name,
+        instance_blocked,
+        blocked_at,
+        blocked_reason,
+        plan_status,
+        profiles:seller_id (
+          full_name,
+          email,
+          whatsapp,
+          subscription_expires_at
+        )
+      `);
+
+    if (instances) {
+      const blocked = instances.filter(i => i.instance_blocked);
+      const active = instances.filter(i => !i.instance_blocked);
+      setBlockedSellers(blocked as unknown as BlockedSeller[]);
+      setActiveSellers(active as unknown as BlockedSeller[]);
+    }
+  };
 
   const daysUntil = (dateStr: string): number => {
     const today = new Date();
@@ -108,11 +158,14 @@ export default function WhatsAppAutomation() {
       </div>
 
       <Tabs defaultValue="dashboard" className="space-y-6">
-        <TabsList className={`grid w-full max-w-md ${isAdmin ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <TabsList className={`grid w-full max-w-lg ${isAdmin ? 'grid-cols-4' : 'grid-cols-2'}`}>
           <TabsTrigger value="dashboard" className="gap-2"><Users className="h-4 w-4" />Dashboard</TabsTrigger>
-          <TabsTrigger value="config" className="gap-2"><Settings className="h-4 w-4" />Minha Instância</TabsTrigger>
+          <TabsTrigger value="config" className="gap-2"><Settings className="h-4 w-4" />Instância</TabsTrigger>
           {isAdmin && (
-            <TabsTrigger value="global" className="gap-2"><Shield className="h-4 w-4" />API Global</TabsTrigger>
+            <>
+              <TabsTrigger value="sellers" className="gap-2"><Ban className="h-4 w-4" />Vendedores</TabsTrigger>
+              <TabsTrigger value="global" className="gap-2"><Shield className="h-4 w-4" />API</TabsTrigger>
+            </>
           )}
         </TabsList>
 
@@ -214,6 +267,117 @@ export default function WhatsAppAutomation() {
             <CardContent><WhatsAppSellerConfig /></CardContent>
           </Card>
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="sellers" className="space-y-6">
+            <div className="grid gap-6 md:grid-cols-2">
+              {/* Blocked Sellers */}
+              <Card className="border-destructive/30">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-destructive flex items-center gap-2">
+                    <Ban className="h-5 w-5" />
+                    Bloqueados ({blockedSellers.length})
+                  </CardTitle>
+                  <CardDescription>Vendedores com instância bloqueada por inadimplência</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {blockedSellers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Nenhum vendedor bloqueado</p>
+                  ) : (
+                    blockedSellers.map((seller) => {
+                      const profile = seller.profiles as any;
+                      return (
+                        <div key={seller.id} className="p-3 rounded-lg border border-destructive/30 bg-destructive/5 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium">{profile?.full_name || profile?.email}</p>
+                              <p className="text-xs text-muted-foreground">{seller.instance_name}</p>
+                            </div>
+                            <Badge variant="destructive">Bloqueado</Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p>📧 {profile?.email}</p>
+                            <p>📱 {profile?.whatsapp || 'Sem WhatsApp'}</p>
+                            <p>📅 Venceu: {profile?.subscription_expires_at ? format(new Date(profile.subscription_expires_at), 'dd/MM/yyyy', { locale: ptBR }) : '-'}</p>
+                            {seller.blocked_at && (
+                              <p>🔒 Bloqueado em: {format(new Date(seller.blocked_at), 'dd/MM/yyyy HH:mm', { locale: ptBR })}</p>
+                            )}
+                            <p className="text-destructive">⚠️ {seller.blocked_reason || 'Inadimplência'}</p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Active Sellers */}
+              <Card className="border-success/30">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-success flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5" />
+                    Ativos ({activeSellers.length})
+                  </CardTitle>
+                  <CardDescription>Vendedores com instância ativa</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {activeSellers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">Nenhuma instância configurada</p>
+                  ) : (
+                    activeSellers.map((seller) => {
+                      const profile = seller.profiles as any;
+                      return (
+                        <div key={seller.id} className="p-3 rounded-lg border bg-card space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="font-medium">{profile?.full_name || profile?.email}</p>
+                              <p className="text-xs text-muted-foreground">{seller.instance_name}</p>
+                            </div>
+                            <Badge variant="default" className="bg-success">Ativo</Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            <p>📧 {profile?.email}</p>
+                            <p>📅 Vence: {profile?.subscription_expires_at ? format(new Date(profile.subscription_expires_at), 'dd/MM/yyyy', { locale: ptBR }) : 'Permanente'}</p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Run Block Check Button */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">Verificação de Bloqueio</p>
+                    <p className="text-sm text-muted-foreground">
+                      Executar verificação manual de inadimplência
+                    </p>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    onClick={async () => {
+                      try {
+                        const { data, error } = await supabase.functions.invoke('check-instance-blocks');
+                        if (error) throw error;
+                        toast.success(`Verificação concluída: ${data?.summary?.blocked_count || 0} bloqueado(s), ${data?.summary?.unblocked_count || 0} desbloqueado(s)`);
+                        fetchSellerInstances();
+                      } catch (err: any) {
+                        toast.error('Erro: ' + err.message);
+                      }
+                    }}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Verificar Agora
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         {isAdmin && (
           <TabsContent value="global">

@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.setup-server-apps]
 verify_jwt = false
+
+[functions.check-instance-blocks]
+verify_jwt = false

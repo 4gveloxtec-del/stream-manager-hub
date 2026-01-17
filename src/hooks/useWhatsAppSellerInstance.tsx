@@ -11,6 +11,12 @@ interface WhatsAppSellerInstance {
   last_connection_check?: string | null;
   created_at?: string;
   updated_at?: string;
+  // New fields for blocking
+  plan_status?: 'active' | 'trial' | 'expired' | 'suspended';
+  plan_expires_at?: string | null;
+  instance_blocked?: boolean;
+  blocked_at?: string | null;
+  blocked_reason?: string | null;
 }
 
 export function useWhatsAppSellerInstance() {
@@ -130,10 +136,15 @@ export function useWhatsAppSellerInstance() {
     }
   }, [instance?.id]);
 
+  const isBlocked = instance?.instance_blocked === true;
+  const blockedReason = instance?.blocked_reason || 'Plano vencido - inadimplência';
+
   return {
     instance,
     isLoading,
     error,
+    isBlocked,
+    blockedReason,
     saveInstance,
     updateConnectionStatus,
     refetch: fetchInstance,

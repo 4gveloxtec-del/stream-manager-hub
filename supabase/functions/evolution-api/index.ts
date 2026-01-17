@@ -154,6 +154,22 @@ serve(async (req) => {
 
     const { action, userId, phone, message, config } = await req.json();
 
+    // Check if seller's instance is blocked (for actions that send messages)
+    const checkBlockedInstance = async (sellerId: string): Promise<{ blocked: boolean; reason?: string }> => {
+      if (!sellerId) return { blocked: false };
+      
+      const { data: instance } = await supabase
+        .from('whatsapp_seller_instances')
+        .select('instance_blocked, blocked_reason')
+        .eq('seller_id', sellerId)
+        .maybeSingle();
+      
+      if (instance?.instance_blocked) {
+        return { blocked: true, reason: instance.blocked_reason || 'Instância bloqueada por inadimplência' };
+      }
+      return { blocked: false };
+    };
+
     switch (action) {
       case 'check_connection': {
         if (!config?.api_url || !config?.api_token || !config?.instance_name) {
@@ -199,6 +215,17 @@ serve(async (req) => {
       }
 
       case 'send_message': {
+        // Check if instance is blocked
+        if (userId) {
+          const blockCheck = await checkBlockedInstance(userId);
+          if (blockCheck.blocked) {
+            return new Response(
+              JSON.stringify({ success: false, blocked: true, error: blockCheck.reason }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+
         if (!config?.api_url || !config?.api_token || !config?.instance_name) {
           return new Response(
             JSON.stringify({ success: false, error: 'Missing configuration' }),

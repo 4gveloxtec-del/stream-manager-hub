@@ -1173,31 +1173,46 @@ export type Database = {
       whatsapp_seller_instances: {
         Row: {
           auto_send_enabled: boolean | null
+          blocked_at: string | null
+          blocked_reason: string | null
           created_at: string | null
           id: string
+          instance_blocked: boolean
           instance_name: string
           is_connected: boolean | null
           last_connection_check: string | null
+          plan_expires_at: string | null
+          plan_status: string
           seller_id: string
           updated_at: string | null
         }
         Insert: {
           auto_send_enabled?: boolean | null
+          blocked_at?: string | null
+          blocked_reason?: string | null
           created_at?: string | null
           id?: string
+          instance_blocked?: boolean
           instance_name?: string
           is_connected?: boolean | null
           last_connection_check?: string | null
+          plan_expires_at?: string | null
+          plan_status?: string
           seller_id: string
           updated_at?: string | null
         }
         Update: {
           auto_send_enabled?: boolean | null
+          blocked_at?: string | null
+          blocked_reason?: string | null
           created_at?: string | null
           id?: string
+          instance_blocked?: boolean
           instance_name?: string
           is_connected?: boolean | null
           last_connection_check?: string | null
+          plan_expires_at?: string | null
+          plan_status?: string
           seller_id?: string
           updated_at?: string | null
         }
@@ -1241,6 +1256,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_and_block_expired_instances: {
+        Args: never
+        Returns: {
+          blocked: boolean
+          instance_name: string
+          seller_email: string
+          seller_id: string
+        }[]
+      }
       cleanup_old_login_attempts: { Args: never; Returns: undefined }
       create_admin_templates: {
         Args: { admin_uuid: string }
@@ -1280,6 +1304,10 @@ export type Database = {
       }
       is_user_blocked: { Args: { user_email: string }; Returns: boolean }
       normalize_server_name: { Args: { name: string }; Returns: string }
+      unblock_seller_instance: {
+        Args: { p_seller_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "admin" | "seller"

@@ -18,7 +18,9 @@ import {
   Play,
   AlertCircle,
   QrCode,
-  PowerOff
+  PowerOff,
+  Ban,
+  CreditCard
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -29,6 +31,8 @@ export function WhatsAppSellerConfig() {
     instance, 
     isLoading, 
     error: instanceError, 
+    isBlocked,
+    blockedReason,
     saveInstance, 
     updateConnectionStatus,
     refetch 
@@ -237,6 +241,40 @@ export function WhatsAppSellerConfig() {
     return (
       <div className="flex items-center justify-center p-8">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Show warning if instance is BLOCKED
+  if (isBlocked) {
+    return (
+      <div className="space-y-4">
+        <Alert variant="destructive" className="border-destructive">
+          <Ban className="h-4 w-4" />
+          <AlertDescription className="font-medium">
+            🚫 Instância WhatsApp Bloqueada
+          </AlertDescription>
+        </Alert>
+        
+        <div className="p-6 rounded-lg bg-destructive/10 border border-destructive/30 text-center space-y-4">
+          <div className="w-16 h-16 mx-auto rounded-full bg-destructive/20 flex items-center justify-center">
+            <CreditCard className="h-8 w-8 text-destructive" />
+          </div>
+          <div>
+            <h3 className="font-bold text-lg text-destructive">Instância Bloqueada por Falta de Pagamento</h3>
+            <p className="text-sm text-muted-foreground mt-2">
+              {blockedReason || 'Seu plano está vencido. Renove para voltar a usar o WhatsApp.'}
+            </p>
+          </div>
+          <div className="pt-4 border-t border-destructive/20">
+            <p className="text-sm text-muted-foreground">
+              ❌ Nenhuma mensagem automática ou manual pode ser enviada
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Entre em contato com o administrador para renovar seu plano.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }

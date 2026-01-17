@@ -154,12 +154,13 @@ serve(async (req) => {
     console.log('Running WhatsApp automation with centralized config...');
     console.log(`Today: ${todayStr}, +3 days: ${in3DaysStr}, +30 days: ${in30DaysStr}`);
 
-    // Get all seller instances with auto_send enabled and connected
+    // Get all seller instances with auto_send enabled, connected AND NOT BLOCKED
     const { data: sellerInstances, error: instancesError } = await supabase
       .from('whatsapp_seller_instances')
       .select('*')
       .eq('auto_send_enabled', true)
-      .eq('is_connected', true);
+      .eq('is_connected', true)
+      .eq('instance_blocked', false); // CRITICAL: Only non-blocked instances
 
     if (instancesError) {
       console.log('Error fetching seller instances:', instancesError.message);
@@ -170,7 +171,7 @@ serve(async (req) => {
     }
 
     if (!sellerInstances || sellerInstances.length === 0) {
-      console.log('No active seller instances found');
+      console.log('No active seller instances found (or all blocked)');
       return new Response(
         JSON.stringify({ message: 'No active seller instances', sent: 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -127,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isVerifyingRole, setIsVerifyingRole] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -219,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchUserData = async (userId: string, isMounted: boolean) => {
+    setIsVerifyingRole(true);
     try {
       const [profileResult, roleResult] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
@@ -275,6 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Silently handle fetch errors
     } finally {
       if (isMounted) {
+        setIsVerifyingRole(false);
         setLoading(false);
       }
     }
@@ -361,7 +364,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })();
   
   // hasSystemAccess: admin, seller, ou user em período de teste
-  const hasSystemAccess = isAdmin || isSeller || trialInfo.isInTrial;
+  // Enquanto verifica role, considera que tem acesso para evitar flash de erro
+  const hasSystemAccess = isVerifyingRole || isAdmin || isSeller || trialInfo.isInTrial;
 
   return (
     <AuthContext.Provider value={{

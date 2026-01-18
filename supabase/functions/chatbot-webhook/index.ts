@@ -301,7 +301,7 @@ async function sendImageMessage(
   }
 }
 
-// Send buttons message via Evolution API
+// Send buttons message via Evolution API v2
 async function sendButtonsMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -310,37 +310,105 @@ async function sendButtonsMessage(
   buttons: Array<{ id: string; text: string }>
 ): Promise<boolean> {
   try {
-    const url = `${globalConfig.api_url}/message/sendButtons/${instanceName}`;
+    // Evolution API v2 uses sendTemplate or sendButtons with different format
+    // Try the v2 format first
+    const baseUrl = globalConfig.api_url.replace(/\/+$/, '');
     
-    const formattedButtons = buttons.slice(0, 3).map((btn) => ({
-      buttonId: btn.id,
-      buttonText: { displayText: btn.text },
-      type: 1,
+    // Format phone
+    let formattedPhone = phone.replace(/\D/g, '');
+    if (!formattedPhone.startsWith('55') && (formattedPhone.length === 10 || formattedPhone.length === 11)) {
+      formattedPhone = '55' + formattedPhone;
+    }
+    
+    // Try native buttons first (some versions support it)
+    const buttonsUrl = `${baseUrl}/message/sendButtons/${instanceName}`;
+    
+    const formattedButtons = buttons.slice(0, 3).map((btn, index) => ({
+      type: "reply",
+      reply: {
+        id: btn.id || `btn_${index}`,
+        title: btn.text.slice(0, 20) // WhatsApp button limit
+      }
     }));
     
-    const response = await fetch(url, {
+    console.log(`Sending buttons to ${formattedPhone} via ${buttonsUrl}`);
+    console.log("Buttons payload:", JSON.stringify(formattedButtons));
+    
+    const response = await fetch(buttonsUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: globalConfig.api_token,
       },
       body: JSON.stringify({
-        number: phone,
-        title: "",
-        description: text,
+        number: formattedPhone,
+        text: text,
         buttons: formattedButtons,
       }),
     });
     
-    console.log(`Buttons message sent to ${phone}: ${response.ok}`);
-    return response.ok;
+    const responseText = await response.text();
+    console.log(`Buttons API response: ${response.status} - ${responseText}`);
+    
+    if (response.ok) {
+      return true;
+    }
+    
+    // If native buttons fail, try interactive buttons format
+    console.log("Native buttons failed, trying interactive format...");
+    
+    const interactiveUrl = `${baseUrl}/message/sendWhatsAppInteractive/${instanceName}`;
+    
+    const interactivePayload = {
+      number: formattedPhone,
+      interactive: {
+        type: "button",
+        body: {
+          text: text
+        },
+        action: {
+          buttons: buttons.slice(0, 3).map((btn, index) => ({
+            type: "reply",
+            reply: {
+              id: btn.id || `btn_${index}`,
+              title: btn.text.slice(0, 20)
+            }
+          }))
+        }
+      }
+    };
+    
+    console.log("Interactive payload:", JSON.stringify(interactivePayload));
+    
+    const interactiveResponse = await fetch(interactiveUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: globalConfig.api_token,
+      },
+      body: JSON.stringify(interactivePayload),
+    });
+    
+    const interactiveText = await interactiveResponse.text();
+    console.log(`Interactive API response: ${interactiveResponse.status} - ${interactiveText}`);
+    
+    if (interactiveResponse.ok) {
+      return true;
+    }
+    
+    // Last resort: send as regular text with emoji buttons
+    console.log("Interactive also failed, sending as text with options...");
+    
+    const textWithButtons = `${text}\n\n${buttons.map((btn, i) => `${i + 1}️⃣ ${btn.text}`).join('\n')}\n\n_Responda com o número da opção desejada._`;
+    
+    return await sendTextMessage(globalConfig, instanceName, phone, textWithButtons);
   } catch (error) {
     console.error("Error sending buttons:", error);
     return false;
   }
 }
 
-// Send list message via Evolution API
+// Send list message via Evolution API v2
 async function sendListMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
@@ -353,34 +421,109 @@ async function sendListMessage(
   }>
 ): Promise<boolean> {
   try {
-    const url = `${globalConfig.api_url}/message/sendList/${instanceName}`;
+    const baseUrl = globalConfig.api_url.replace(/\/+$/, '');
+    
+    // Format phone
+    let formattedPhone = phone.replace(/\D/g, '');
+    if (!formattedPhone.startsWith('55') && (formattedPhone.length === 10 || formattedPhone.length === 11)) {
+      formattedPhone = '55' + formattedPhone;
+    }
+    
+    // Try native list endpoint first
+    const listUrl = `${baseUrl}/message/sendList/${instanceName}`;
     
     const formattedSections = sections.map((section) => ({
-      title: section.title,
+      title: section.title.slice(0, 24), // WhatsApp section title limit
       rows: section.items.slice(0, 10).map((item) => ({
         rowId: item.id,
-        title: item.title,
-        description: item.description || "",
+        title: item.title.slice(0, 24), // WhatsApp row title limit
+        description: (item.description || "").slice(0, 72), // WhatsApp description limit
       })),
     }));
     
-    const response = await fetch(url, {
+    console.log(`Sending list to ${formattedPhone} via ${listUrl}`);
+    console.log("List sections:", JSON.stringify(formattedSections));
+    
+    const response = await fetch(listUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: globalConfig.api_token,
       },
       body: JSON.stringify({
-        number: phone,
-        title: "",
+        number: formattedPhone,
+        title: "Menu",
         description: text,
-        buttonText,
+        buttonText: buttonText.slice(0, 20), // WhatsApp button text limit
+        footerText: "",
         sections: formattedSections,
       }),
     });
     
-    console.log(`List message sent to ${phone}: ${response.ok}`);
-    return response.ok;
+    const responseText = await response.text();
+    console.log(`List API response: ${response.status} - ${responseText}`);
+    
+    if (response.ok) {
+      return true;
+    }
+    
+    // Try interactive list format
+    console.log("Native list failed, trying interactive format...");
+    
+    const interactiveUrl = `${baseUrl}/message/sendWhatsAppInteractive/${instanceName}`;
+    
+    const interactivePayload = {
+      number: formattedPhone,
+      interactive: {
+        type: "list",
+        header: {
+          type: "text",
+          text: "Menu"
+        },
+        body: {
+          text: text
+        },
+        action: {
+          button: buttonText.slice(0, 20),
+          sections: formattedSections.map(section => ({
+            title: section.title,
+            rows: section.rows
+          }))
+        }
+      }
+    };
+    
+    console.log("Interactive list payload:", JSON.stringify(interactivePayload));
+    
+    const interactiveResponse = await fetch(interactiveUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: globalConfig.api_token,
+      },
+      body: JSON.stringify(interactivePayload),
+    });
+    
+    const interactiveText = await interactiveResponse.text();
+    console.log(`Interactive list API response: ${interactiveResponse.status} - ${interactiveText}`);
+    
+    if (interactiveResponse.ok) {
+      return true;
+    }
+    
+    // Last resort: send as regular text with numbered list
+    console.log("Interactive list also failed, sending as text with options...");
+    
+    let textWithList = `${text}\n\n📋 *Opções disponíveis:*\n`;
+    sections.forEach(section => {
+      textWithList += `\n*${section.title}*\n`;
+      section.items.forEach((item, i) => {
+        textWithList += `${i + 1}. ${item.title}${item.description ? ` - ${item.description}` : ''}\n`;
+      });
+    });
+    textWithList += '\n_Responda com o nome ou número da opção desejada._';
+    
+    return await sendTextMessage(globalConfig, instanceName, phone, textWithList);
   } catch (error) {
     console.error("Error sending list:", error);
     return false;

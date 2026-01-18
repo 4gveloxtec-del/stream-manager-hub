@@ -235,12 +235,12 @@ export function AppLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen min-h-[100dvh] bg-background">
       {/* Trial Banner - shows for users in trial period */}
       {showTrialBanner && (
         <div 
-          className="fixed top-0 right-0 z-[60] transition-all duration-300"
-          style={!isMobile ? { left: sidebarWidth } : { left: 0 }}
+          className="fixed right-0 z-[60] transition-smooth safe-area-top"
+          style={!isMobile ? { left: sidebarWidth, top: 0 } : { left: 0, top: 'env(safe-area-inset-top)' }}
         >
           <TrialBanner daysRemaining={trialInfo.daysRemaining} />
         </div>
@@ -250,7 +250,7 @@ export function AppLayout() {
       {!isMobile && (
         <div 
           className={cn(
-            "fixed right-0 z-50 p-2 bg-background/80 backdrop-blur-sm transition-all duration-300",
+            "fixed right-0 z-50 p-2 bg-background/80 backdrop-blur-sm transition-smooth",
             showTrialBanner ? "top-10" : "top-0"
           )}
           style={{ left: sidebarWidth }}
@@ -261,7 +261,7 @@ export function AppLayout() {
               variant="outline"
               size="sm"
               onClick={handleRefresh}
-              className="gap-2 bg-background border-border"
+              className="gap-2 bg-background border-border touch-target"
               title="Atualizar"
             >
               <RefreshCw className="h-4 w-4" />
@@ -271,7 +271,7 @@ export function AppLayout() {
               variant="outline"
               size="sm"
               onClick={handleShare}
-              className="gap-2 bg-background border-border"
+              className="gap-2 bg-background border-border touch-target"
               title="Compartilhar"
             >
               <Share2 className="h-4 w-4" />
@@ -285,7 +285,7 @@ export function AppLayout() {
       {isMobile && (
         <div className={cn(
           "fixed left-0 right-0 z-50 p-2 bg-background/80 backdrop-blur-sm border-b border-border",
-          showTrialBanner ? "top-10" : "top-0"
+          showTrialBanner ? "top-[calc(env(safe-area-inset-top)+2.5rem)]" : "top-[env(safe-area-inset-top)]"
         )}>
           <div className="flex justify-end">
             <PendingQueueIndicator />
@@ -296,13 +296,18 @@ export function AppLayout() {
       <Sidebar />
       <main 
         className={cn(
-          "min-h-screen transition-all duration-300",
-          showTrialBanner ? "pt-[88px]" : "pt-12",
-          isMobile ? "pb-20" : ""
+          "min-h-screen min-h-[100dvh] transition-smooth scroll-native",
+          showTrialBanner ? "pt-20 sm:pt-[88px]" : "pt-14 sm:pt-12"
         )}
-        style={!isMobile ? { paddingLeft: sidebarWidth } : undefined}
+        style={{
+          paddingLeft: !isMobile ? sidebarWidth : undefined,
+          paddingBottom: isMobile ? 'calc(5rem + env(safe-area-inset-bottom))' : undefined
+        }}
       >
-        <div className={isMobile ? 'p-3' : 'p-6'}>
+        <div className={cn(
+          "p-responsive animate-fade-in",
+          isMobile ? "pb-4" : ""
+        )}>
           <Outlet />
         </div>
       </main>
@@ -310,7 +315,10 @@ export function AppLayout() {
         <>
           <BottomNavigation onMenuClick={() => setMenuOpen(true)} />
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-            <SheetContent side="left" className="w-64 p-0 bg-sidebar border-sidebar-border">
+            <SheetContent 
+              side="left" 
+              className="w-[280px] max-w-[85vw] p-0 bg-sidebar border-sidebar-border"
+            >
               <MobileMenuContent onNavigate={() => setMenuOpen(false)} />
             </SheetContent>
           </Sheet>

@@ -2,20 +2,17 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { 
   Wifi, 
   WifiOff, 
-  Save, 
   Loader2,
   QrCode,
   CheckCircle2,
   AlertCircle,
   PartyPopper,
-  Link,
-  RefreshCw
+  RefreshCw,
+  Smartphone
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -31,7 +28,6 @@ import confetti from 'canvas-confetti';
 interface InstanceStatus {
   configured: boolean;
   instance_name?: string;
-  instance_link?: string;
   is_connected?: boolean;
   webhook_configured?: boolean;
   blocked?: boolean;
@@ -39,11 +35,10 @@ interface InstanceStatus {
 }
 
 export function SimplifiedWhatsAppConfig() {
-  const { user, profile, isAdmin } = useAuth();
+  const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [isLoadingQr, setIsLoadingQr] = useState(false);
-  const [instanceLink, setInstanceLink] = useState('');
   const [status, setStatus] = useState<InstanceStatus | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -99,9 +94,6 @@ export function SimplifiedWhatsAppConfig() {
       if (error) throw error;
 
       setStatus(data);
-      if (data?.instance_link) {
-        setInstanceLink(data.instance_link);
-      }
     } catch (err: any) {
       console.error('Error loading status:', err);
     } finally {
@@ -156,20 +148,12 @@ export function SimplifiedWhatsAppConfig() {
     }
   };
 
-  // Save instance link
-  const handleSave = async () => {
-    if (!instanceLink.trim()) {
-      toast.error('Digite o link ou nome da sua instância');
-      return;
-    }
-
-    setIsSaving(true);
+  // Create instance automatically
+  const handleCreateInstance = async () => {
+    setIsCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke('configure-seller-instance', {
-        body: { 
-          action: 'configure',
-          instance_link: instanceLink.trim()
-        },
+        body: { action: 'auto_create' },
       });
 
       if (error) throw error;
@@ -180,18 +164,21 @@ export function SimplifiedWhatsAppConfig() {
       }
 
       if (!data.success) {
-        toast.error(data.error || 'Erro ao configurar instância');
+        toast.error(data.error || 'Erro ao criar instância');
         return;
       }
 
-      toast.success(data.message || 'Instância configurada!');
+      toast.success('Instância criada! Agora escaneie o QR Code.');
       
-      // Reload status
+      // Reload status and get QR code
       await loadStatus();
+      
+      // Automatically get QR code
+      handleGetQrCode();
     } catch (err: any) {
       toast.error('Erro: ' + err.message);
     } finally {
-      setIsSaving(false);
+      setIsCreating(false);
     }
   };
 
@@ -271,47 +258,56 @@ export function SimplifiedWhatsAppConfig() {
       </Dialog>
 
       <div className="space-y-6">
-        {/* Configuration Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Link className="h-5 w-5" />
-              Conectar WhatsApp
-            </CardTitle>
-            <CardDescription>
-              Cole o link ou nome da sua instância WhatsApp para ativar o envio automático de mensagens.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="instance-link">Link da Instância / Nome</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="instance-link"
-                  placeholder="Ex: sandelrodrig ou https://api.exemplo.com/sandelrodrig"
-                  value={instanceLink}
-                  onChange={(e) => setInstanceLink(e.target.value)}
-                  className="flex-1"
-                />
-                <Button 
-                  onClick={handleSave} 
-                  disabled={isSaving || !instanceLink.trim()}
-                >
-                  {isSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Digite apenas o nome da instância ou a URL completa
-              </p>
-            </div>
+        {/* Not configured - Show create button */}
+        {!status?.configured && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Smartphone className="h-5 w-5" />
+                Conectar WhatsApp
+              </CardTitle>
+              <CardDescription>
+                Clique no botão abaixo para criar sua instância WhatsApp automaticamente e começar a enviar mensagens.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button 
+                onClick={handleCreateInstance} 
+                disabled={isCreating}
+                size="lg"
+                className="w-full"
+              >
+                {isCreating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Criando instância...
+                  </>
+                ) : (
+                  <>
+                    <QrCode className="h-4 w-4 mr-2" />
+                    Criar e Conectar WhatsApp
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
-            {/* Status indicators */}
-            {status?.configured && (
-              <div className="flex flex-wrap gap-3 pt-2">
+        {/* Configured - Show status */}
+        {status?.configured && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Smartphone className="h-5 w-5" />
+                Sua Instância WhatsApp
+              </CardTitle>
+              <CardDescription>
+                Instância: <strong>{status.instance_name}</strong>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Status indicators */}
+              <div className="flex flex-wrap gap-3">
                 <div className={cn(
                   "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm",
                   status.is_connected 
@@ -338,9 +334,9 @@ export function SimplifiedWhatsAppConfig() {
                   </div>
                 )}
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {/* QR Code Section - Only show if configured but not connected */}
         {status?.configured && !status?.is_connected && (

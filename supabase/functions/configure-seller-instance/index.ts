@@ -17,25 +17,11 @@ function normalizeApiUrl(url: string): string {
   return cleanUrl;
 }
 
-// Extract instance name from a link/URL
-function extractInstanceName(input: string): string {
-  const trimmed = input.trim();
-  
-  // If it's a URL, extract the last path segment
-  if (trimmed.includes('/')) {
-    const parts = trimmed.split('/').filter(p => p.length > 0);
-    // Get last non-empty segment that's not 'manager' or common paths
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const segment = parts[i].toLowerCase();
-      if (!['manager', 'api', 'instance', 'connect', 'qrcode', 'http:', 'https:'].includes(segment) && 
-          !segment.includes('.') && parts[i].length > 0) {
-        return parts[i];
-      }
-    }
-  }
-  
-  // If no URL pattern found, return as-is (just the instance name)
-  return trimmed.replace(/[^a-zA-Z0-9_-]/g, '');
+// Generate unique instance name from seller ID
+function generateInstanceName(sellerId: string): string {
+  // Use first 8 chars of UUID + timestamp suffix for uniqueness
+  const shortId = sellerId.replace(/-/g, '').substring(0, 8);
+  return `seller_${shortId}`;
 }
 
 // Check if seller has a valid plan
@@ -70,6 +56,56 @@ async function checkSellerPlan(supabase: any, sellerId: string): Promise<{ valid
 
   // Free trial - check if trial is still valid
   return { valid: false, reason: 'Período de teste expirado' };
+}
+
+// Create instance on Evolution API
+async function createInstance(
+  apiUrl: string,
+  apiToken: string,
+  instanceName: string
+): Promise<{ success: boolean; qrcode?: string; error?: string }> {
+  try {
+    const baseUrl = normalizeApiUrl(apiUrl);
+    const createUrl = `${baseUrl}/instance/create`;
+    
+    console.log(`Creating instance: ${instanceName} at ${createUrl}`);
+
+    const response = await fetch(createUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': apiToken,
+      },
+      body: JSON.stringify({
+        instanceName: instanceName,
+        qrcode: true,
+        integration: 'WHATSAPP-BAILEYS',
+      }),
+    });
+
+    const result = await response.json();
+    console.log('Create instance response:', JSON.stringify(result));
+
+    if (!response.ok) {
+      // Instance might already exist - that's okay
+      if (result.message?.includes('already') || result.error?.includes('already')) {
+        console.log('Instance already exists, continuing...');
+        return { success: true };
+      }
+      return { success: false, error: result.message || 'Falha ao criar instância' };
+    }
+
+    // Extract QR code if available
+    let qrcode = null;
+    if (result.qrcode?.base64) qrcode = result.qrcode.base64;
+    else if (result.base64) qrcode = result.base64;
+    else if (result.qrcode?.code) qrcode = result.qrcode.code;
+
+    return { success: true, qrcode };
+  } catch (error: unknown) {
+    console.error('Error creating instance:', error);
+    return { success: false, error: (error as Error).message };
+  }
 }
 
 // Configure webhook on Evolution API
@@ -188,24 +224,22 @@ async function getQrCode(
 
     if (!response.ok) {
       // Instance might not exist, try to create it
-      const createUrl = `${baseUrl}/instance/create`;
-      const createResponse = await fetch(createUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': apiToken,
-        },
-        body: JSON.stringify({
-          instanceName: instanceName,
-          qrcode: true,
-          integration: 'WHATSAPP-BAILEYS',
-        }),
+      const createResult = await createInstance(apiUrl, apiToken, instanceName);
+      if (createResult.qrcode) {
+        return { qrcode: createResult.qrcode };
+      }
+      
+      // Try connect again after creating
+      const retryResponse = await fetch(connectUrl, {
+        method: 'GET',
+        headers: { 'apikey': apiToken },
       });
-
-      if (createResponse.ok) {
-        const createResult = await createResponse.json();
-        if (createResult.qrcode?.base64) return { qrcode: createResult.qrcode.base64 };
-        if (createResult.base64) return { qrcode: createResult.base64 };
+      
+      if (retryResponse.ok) {
+        const retryResult = await retryResponse.json();
+        if (retryResult.base64) return { qrcode: retryResult.base64 };
+        if (retryResult.code) return { qrcode: retryResult.code };
+        if (retryResult.qrcode?.base64) return { qrcode: retryResult.qrcode.base64 };
       }
       
       return { error: 'Não foi possível obter o QR Code' };
@@ -253,10 +287,10 @@ serve(async (req) => {
       );
     }
 
-    const { action, instance_link } = await req.json();
+    const { action } = await req.json();
 
     switch (action) {
-      case 'configure': {
+      case 'auto_create': {
         // 1. Check seller plan
         const planCheck = await checkSellerPlan(supabase, user.id);
         if (!planCheck.valid) {
@@ -270,13 +304,19 @@ serve(async (req) => {
           );
         }
 
-        // 2. Extract instance name from link
-        const instanceName = extractInstanceName(instance_link);
-        if (!instanceName || instanceName.length < 2) {
+        // 2. Check if already has an instance
+        const { data: existing } = await supabase
+          .from('whatsapp_seller_instances')
+          .select('id, instance_name')
+          .eq('seller_id', user.id)
+          .maybeSingle();
+
+        if (existing?.instance_name) {
           return new Response(
             JSON.stringify({ 
-              success: false, 
-              error: 'Link da instância inválido. Forneça o nome ou URL completa.' 
+              success: true, 
+              instance_name: existing.instance_name,
+              message: 'Instância já existe. Gere o QR Code para conectar.'
             }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
@@ -301,31 +341,48 @@ serve(async (req) => {
           );
         }
 
-        // 4. Configure webhook on Evolution API
+        // 4. Generate unique instance name
+        const instanceName = generateInstanceName(user.id);
+        console.log(`Generated instance name: ${instanceName} for seller: ${user.id}`);
+
+        // 5. Create instance on Evolution API
+        const createResult = await createInstance(
+          globalConfig.api_url,
+          globalConfig.api_token,
+          instanceName
+        );
+
+        if (!createResult.success) {
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              error: createResult.error || 'Falha ao criar instância na Evolution API'
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // 6. Configure webhook
         const webhookResult = await configureWebhook(
           globalConfig.api_url,
           globalConfig.api_token,
           instanceName
         );
 
-        // 5. Save or update seller instance
+        // 7. Save seller instance
         const instanceData = {
           seller_id: user.id,
           instance_name: instanceName,
-          instance_link: instance_link,
+          instance_link: null, // Not needed anymore
           webhook_auto_configured: webhookResult.success,
-          auto_configured_at: webhookResult.success ? new Date().toISOString() : null,
+          auto_configured_at: new Date().toISOString(),
           configuration_error: webhookResult.success ? null : webhookResult.error,
           auto_send_enabled: true,
+          is_connected: false,
+          instance_blocked: false,
+          plan_status: 'active',
           updated_at: new Date().toISOString(),
         };
-
-        // Check if instance exists
-        const { data: existing } = await supabase
-          .from('whatsapp_seller_instances')
-          .select('id')
-          .eq('seller_id', user.id)
-          .maybeSingle();
 
         if (existing) {
           await supabase
@@ -335,15 +392,10 @@ serve(async (req) => {
         } else {
           await supabase
             .from('whatsapp_seller_instances')
-            .insert({
-              ...instanceData,
-              is_connected: false,
-              instance_blocked: false,
-              plan_status: 'active',
-            });
+            .insert(instanceData);
         }
 
-        // 6. Create default chatbot settings if not exists
+        // 8. Create default chatbot settings
         const { data: existingSettings } = await supabase
           .from('chatbot_settings')
           .select('id')
@@ -361,7 +413,6 @@ serve(async (req) => {
               typing_enabled: true,
             });
         } else {
-          // Enable chatbot if it was disabled
           await supabase
             .from('chatbot_settings')
             .update({ is_enabled: true })
@@ -373,9 +424,8 @@ serve(async (req) => {
             success: true, 
             instance_name: instanceName,
             webhook_configured: webhookResult.success,
-            message: webhookResult.success 
-              ? 'Instância configurada! Agora conecte seu WhatsApp.'
-              : 'Instância salva, mas o webhook precisa ser configurado manualmente.'
+            qrcode: createResult.qrcode,
+            message: 'Instância criada com sucesso! Escaneie o QR Code.'
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -389,9 +439,9 @@ serve(async (req) => {
           .eq('seller_id', user.id)
           .maybeSingle();
 
-        if (!instance) {
+        if (!instance?.instance_name) {
           return new Response(
-            JSON.stringify({ error: 'Configure sua instância primeiro' }),
+            JSON.stringify({ error: 'Crie sua instância primeiro' }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
@@ -450,7 +500,7 @@ serve(async (req) => {
           .eq('seller_id', user.id)
           .maybeSingle();
 
-        if (!instance) {
+        if (!instance?.instance_name) {
           return new Response(
             JSON.stringify({ configured: false }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -467,7 +517,7 @@ serve(async (req) => {
           .single();
 
         let isConnected = instance.is_connected;
-        if (globalConfig && instance.instance_name) {
+        if (globalConfig) {
           isConnected = await checkConnection(
             globalConfig.api_url,
             globalConfig.api_token,
@@ -490,7 +540,6 @@ serve(async (req) => {
           JSON.stringify({
             configured: true,
             instance_name: instance.instance_name,
-            instance_link: instance.instance_link,
             is_connected: isConnected,
             webhook_configured: instance.webhook_auto_configured,
             blocked: instance.instance_blocked,
@@ -502,12 +551,12 @@ serve(async (req) => {
 
       default:
         return new Response(
-          JSON.stringify({ error: 'Ação desconhecida' }),
+          JSON.stringify({ error: 'Ação inválida' }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
   } catch (error: unknown) {
-    console.error("Error:", error);
+    console.error('Error:', error);
     return new Response(
       JSON.stringify({ error: (error as Error).message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

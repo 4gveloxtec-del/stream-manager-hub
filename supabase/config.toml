@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.check-instance-blocks]
 verify_jwt = false
+
+[functions.send-welcome-message]
+verify_jwt = false

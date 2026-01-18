@@ -839,6 +839,22 @@ export default function Clients() {
         })();
       }
       
+      // Send welcome message via WhatsApp API in background
+      if (insertedData?.id && formData.phone) {
+        supabase.functions.invoke('send-welcome-message', {
+          body: {
+            clientId: insertedData.id,
+            sellerId: user!.id,
+          },
+        }).then(({ data: welcomeData, error: welcomeError }) => {
+          if (welcomeError) {
+            console.log('Welcome message not sent:', welcomeError.message);
+          } else if (welcomeData?.success) {
+            console.log('Welcome message sent successfully');
+          }
+        });
+      }
+      
       return insertedData;
     },
     onMutate: async () => {

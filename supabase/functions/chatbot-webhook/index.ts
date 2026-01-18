@@ -138,6 +138,9 @@ interface ChatbotSettings {
   response_delay_max: number;
   ignore_groups: boolean;
   ignore_own_messages: boolean;
+  typing_enabled: boolean;
+  typing_duration_min: number;
+  typing_duration_max: number;
 }
 
 interface GlobalConfig {
@@ -342,12 +345,141 @@ async function auditWebhook(
   }
 }
 
+// Send "typing" status via Evolution API
+async function sendTypingStatus(
+  globalConfig: GlobalConfig,
+  instanceName: string,
+  phone: string,
+  durationMs: number
+): Promise<boolean> {
+  try {
+    const baseUrl = normalizeApiUrl(globalConfig.api_url);
+    const formattedPhone = formatPhone(phone);
+    
+    // Try different endpoints for typing status
+    const endpoints = [
+      `${baseUrl}/chat/sendPresence/${instanceName}`,
+      `${baseUrl}/message/sendPresence/${instanceName}`,
+      `${baseUrl}/chat/presence/${instanceName}`,
+    ];
+
+    let sent = false;
+    
+    for (const url of endpoints) {
+      try {
+        console.log(`[sendTypingStatus] Trying: ${url}`);
+        
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: globalConfig.api_token,
+          },
+          body: JSON.stringify({
+            number: formattedPhone,
+            presence: "composing",
+            delay: durationMs,
+          }),
+        });
+
+        if (response.ok) {
+          console.log(`[sendTypingStatus] Success with: ${url}`);
+          sent = true;
+          break;
+        }
+      } catch (e) {
+        console.log(`[sendTypingStatus] Failed with: ${url}`);
+      }
+    }
+
+    if (sent) {
+      // Wait for typing duration
+      await new Promise((resolve) => setTimeout(resolve, durationMs));
+    }
+
+    return sent;
+  } catch (error) {
+    console.error("[sendTypingStatus] Error:", error);
+    return false;
+  }
+}
+
+// Validate API connection before sending
+async function validateApiConnection(
+  globalConfig: GlobalConfig,
+  instanceName: string
+): Promise<{ connected: boolean; error?: string }> {
+  try {
+    const baseUrl = normalizeApiUrl(globalConfig.api_url);
+    const url = `${baseUrl}/instance/connectionState/${instanceName}`;
+
+    console.log(`[validateApiConnection] Checking: ${url}`);
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: globalConfig.api_token,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`[validateApiConnection] API error: ${response.status} - ${errorText}`);
+      return { connected: false, error: `API retornou ${response.status}: ${errorText}` };
+    }
+
+    const data = await response.json();
+    const state = data?.instance?.state || data?.state || data?.connectionState;
+    
+    console.log(`[validateApiConnection] State: ${state}`);
+    
+    if (state === "open" || state === "connected") {
+      return { connected: true };
+    }
+
+    return { connected: false, error: `Instância não conectada: ${state}` };
+  } catch (error: any) {
+    console.error("[validateApiConnection] Error:", error);
+    return { connected: false, error: error.message };
+  }
+}
+
+// Log send attempt to database
+async function logSendAttempt(
+  supabase: any,
+  sellerId: string,
+  phone: string,
+  instanceName: string,
+  messageType: string,
+  success: boolean,
+  statusCode?: number,
+  apiResponse?: string,
+  errorMessage?: string
+): Promise<void> {
+  try {
+    await supabase.from("chatbot_send_logs").insert({
+      seller_id: sellerId,
+      contact_phone: phone,
+      instance_name: instanceName,
+      message_type: messageType,
+      success,
+      api_status_code: statusCode,
+      api_response: apiResponse?.substring(0, 1000),
+      error_message: errorMessage,
+    });
+  } catch (e) {
+    console.log("[logSendAttempt] Failed to log:", e);
+  }
+}
+
 // Send text message via Evolution API
 async function sendTextMessage(
   globalConfig: GlobalConfig,
   instanceName: string,
   phone: string,
-  text: string
+  text: string,
+  supabase?: any,
+  sellerId?: string
 ): Promise<boolean> {
   try {
     const baseUrl = normalizeApiUrl(globalConfig.api_url);
@@ -372,9 +504,40 @@ async function sendTextMessage(
 
     const responseText = await response.text();
     console.log(`[sendTextMessage] Response: ${response.status} - ${responseText}`);
+    
+    // Log the attempt
+    if (supabase && sellerId) {
+      await logSendAttempt(
+        supabase,
+        sellerId,
+        phone,
+        instanceName,
+        "text",
+        response.ok,
+        response.status,
+        responseText,
+        response.ok ? undefined : `Falha ao enviar: ${response.statusText}`
+      );
+    }
+    
     return response.ok;
-  } catch (error) {
+  } catch (error: any) {
     console.error("[sendTextMessage] Error:", error);
+    
+    if (supabase && sellerId) {
+      await logSendAttempt(
+        supabase,
+        sellerId,
+        phone,
+        instanceName,
+        "text",
+        false,
+        undefined,
+        undefined,
+        error.message
+      );
+    }
+    
     return false;
   }
 }
@@ -946,12 +1109,15 @@ serve(async (req) => {
       .eq("seller_id", sellerId)
       .maybeSingle();
     
-    const chatbotSettings: ChatbotSettings = settings || {
-      is_enabled: false,
-      response_delay_min: 2,
-      response_delay_max: 5,
-      ignore_groups: true,
-      ignore_own_messages: true,
+    const chatbotSettings: ChatbotSettings = {
+      is_enabled: settings?.is_enabled ?? false,
+      response_delay_min: settings?.response_delay_min ?? 2,
+      response_delay_max: settings?.response_delay_max ?? 5,
+      ignore_groups: settings?.ignore_groups ?? true,
+      ignore_own_messages: settings?.ignore_own_messages ?? true,
+      typing_enabled: settings?.typing_enabled ?? true,
+      typing_duration_min: settings?.typing_duration_min ?? 2,
+      typing_duration_max: settings?.typing_duration_max ?? 5,
     };
     
     if (!chatbotSettings.is_enabled) {
@@ -1109,13 +1275,66 @@ serve(async (req) => {
       // Fallback to text only
       matchingRule.response_type = "text";
     }
-    
-    // Apply delay
-    const delay = getRandomDelay(
-      chatbotSettings.response_delay_min,
-      chatbotSettings.response_delay_max
-    );
-    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    // Validate API connection before sending
+    const connectionCheck = await validateApiConnection(globalConfig, instanceName);
+    if (!connectionCheck.connected) {
+      console.log("API connection validation failed:", connectionCheck.error);
+      
+      // Log the failure
+      await logSendAttempt(
+        supabase,
+        sellerId,
+        phone,
+        instanceName,
+        matchingRule.response_type,
+        false,
+        undefined,
+        undefined,
+        connectionCheck.error || "Instância desconectada"
+      );
+
+      // Update instance status
+      await supabase
+        .from("whatsapp_seller_instances")
+        .update({ is_connected: false })
+        .eq("seller_id", sellerId);
+
+      await auditWebhook(supabase, {
+        status: "failed",
+        reason: connectionCheck.error || "API disconnected",
+        event: payload.event,
+        instanceName,
+        remoteJid,
+        sellerId,
+      });
+
+      return new Response(
+        JSON.stringify({ 
+          status: "failed", 
+          reason: "API disconnected", 
+          error: connectionCheck.error 
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Send "typing" status if enabled
+    if (chatbotSettings.typing_enabled) {
+      const typingDuration = getRandomDelay(
+        chatbotSettings.typing_duration_min,
+        chatbotSettings.typing_duration_max
+      );
+      console.log(`[Chatbot] Sending typing status for ${typingDuration}ms`);
+      await sendTypingStatus(globalConfig, instanceName, phone, typingDuration);
+    } else {
+      // Apply regular delay if typing is disabled
+      const delay = getRandomDelay(
+        chatbotSettings.response_delay_min,
+        chatbotSettings.response_delay_max
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
     
     // Send response based on type
     let sent = false;
@@ -1123,14 +1342,14 @@ serve(async (req) => {
     
     switch (matchingRule.response_type) {
       case "text":
-        sent = await sendTextMessage(globalConfig, instanceName, phone, content.text);
+        sent = await sendTextMessage(globalConfig, instanceName, phone, content.text, supabase, sellerId);
         break;
         
       case "text_image":
         if (content.image_url) {
           sent = await sendImageMessage(globalConfig, instanceName, phone, content.text, content.image_url);
         } else {
-          sent = await sendTextMessage(globalConfig, instanceName, phone, content.text);
+          sent = await sendTextMessage(globalConfig, instanceName, phone, content.text, supabase, sellerId);
         }
         break;
         
@@ -1144,7 +1363,7 @@ serve(async (req) => {
             content.buttons.map((b) => ({ id: b.trigger, text: b.text }))
           );
         } else {
-          sent = await sendTextMessage(globalConfig, instanceName, phone, content.text);
+          sent = await sendTextMessage(globalConfig, instanceName, phone, content.text, supabase, sellerId);
         }
         break;
         
@@ -1162,7 +1381,7 @@ serve(async (req) => {
             }))
           );
         } else {
-          sent = await sendTextMessage(globalConfig, instanceName, phone, content.text);
+          sent = await sendTextMessage(globalConfig, instanceName, phone, content.text, supabase, sellerId);
         }
         break;
     }

@@ -56,6 +56,9 @@ export interface ChatbotSettings {
   ignore_own_messages: boolean;
   webhook_configured: boolean;
   webhook_url?: string;
+  typing_enabled: boolean;
+  typing_duration_min: number;
+  typing_duration_max: number;
 }
 
 export interface ChatbotContact {

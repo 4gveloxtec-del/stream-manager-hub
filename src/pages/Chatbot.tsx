@@ -88,6 +88,9 @@ export default function Chatbot() {
     response_delay_max: 5,
     ignore_groups: true,
     ignore_own_messages: true,
+    typing_enabled: true,
+    typing_duration_min: 2,
+    typing_duration_max: 5,
   });
 
   // Sincroniza o formulário com o que vem do backend (persistência após recarregar)
@@ -100,6 +103,9 @@ export default function Chatbot() {
       response_delay_max: settings.response_delay_max ?? 5,
       ignore_groups: settings.ignore_groups ?? true,
       ignore_own_messages: settings.ignore_own_messages ?? true,
+      typing_enabled: settings.typing_enabled ?? true,
+      typing_duration_min: settings.typing_duration_min ?? 2,
+      typing_duration_max: settings.typing_duration_max ?? 5,
     }));
   }, [settings]);
 
@@ -604,27 +610,80 @@ export default function Chatbot() {
               </div>
               
               <Separator />
-              
-              <div className="grid grid-cols-2 gap-4">
+
+              {/* Typing Status Section */}
+              <div className="flex items-center justify-between">
                 <div>
-                  <Label>Delay Mínimo (segundos)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={30}
-                    value={settingsForm.response_delay_min}
-                    onChange={(e) => setSettingsForm(prev => ({ ...prev, response_delay_min: parseInt(e.target.value) || 2 }))}
-                  />
+                  <Label className="flex items-center gap-2">
+                    ✍️ Simular "Digitando..."
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Mostra status "digitando" antes de enviar a mensagem (mais humano)
+                  </p>
                 </div>
-                <div>
-                  <Label>Delay Máximo (segundos)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={settingsForm.response_delay_max}
-                    onChange={(e) => setSettingsForm(prev => ({ ...prev, response_delay_max: parseInt(e.target.value) || 5 }))}
-                  />
+                <Switch
+                  checked={settingsForm.typing_enabled}
+                  onCheckedChange={(checked) => setSettingsForm(prev => ({ ...prev, typing_enabled: checked }))}
+                />
+              </div>
+
+              {settingsForm.typing_enabled && (
+                <div className="grid grid-cols-2 gap-4 pl-4 border-l-2 border-primary/20">
+                  <div>
+                    <Label>Tempo Mínimo (segundos)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={settingsForm.typing_duration_min}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, typing_duration_min: parseInt(e.target.value) || 2 }))}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Mínimo de digitação</p>
+                  </div>
+                  <div>
+                    <Label>Tempo Máximo (segundos)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={15}
+                      value={settingsForm.typing_duration_max}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, typing_duration_max: parseInt(e.target.value) || 5 }))}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Máximo de digitação</p>
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
+              <div className="space-y-2">
+                <Label>Delay de Resposta (quando "Digitando" está desativado)</Label>
+                <p className="text-sm text-muted-foreground">
+                  Tempo de espera antes de enviar a resposta
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-xs">Mínimo (segundos)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={settingsForm.response_delay_min}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, response_delay_min: parseInt(e.target.value) || 2 }))}
+                      disabled={settingsForm.typing_enabled}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Máximo (segundos)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={settingsForm.response_delay_max}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, response_delay_max: parseInt(e.target.value) || 5 }))}
+                      disabled={settingsForm.typing_enabled}
+                    />
+                  </div>
                 </div>
               </div>
               

@@ -265,6 +265,45 @@ export type Database = {
         }
         Relationships: []
       }
+      chatbot_send_logs: {
+        Row: {
+          api_response: string | null
+          api_status_code: number | null
+          contact_phone: string
+          created_at: string | null
+          error_message: string | null
+          id: string
+          instance_name: string
+          message_type: string
+          seller_id: string
+          success: boolean | null
+        }
+        Insert: {
+          api_response?: string | null
+          api_status_code?: number | null
+          contact_phone: string
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          instance_name: string
+          message_type: string
+          seller_id: string
+          success?: boolean | null
+        }
+        Update: {
+          api_response?: string | null
+          api_status_code?: number | null
+          contact_phone?: string
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          instance_name?: string
+          message_type?: string
+          seller_id?: string
+          success?: boolean | null
+        }
+        Relationships: []
+      }
       chatbot_settings: {
         Row: {
           created_at: string | null
@@ -275,6 +314,9 @@ export type Database = {
           response_delay_max: number | null
           response_delay_min: number | null
           seller_id: string
+          typing_duration_max: number | null
+          typing_duration_min: number | null
+          typing_enabled: boolean | null
           updated_at: string | null
           webhook_configured: boolean | null
           webhook_url: string | null
@@ -288,6 +330,9 @@ export type Database = {
           response_delay_max?: number | null
           response_delay_min?: number | null
           seller_id: string
+          typing_duration_max?: number | null
+          typing_duration_min?: number | null
+          typing_enabled?: boolean | null
           updated_at?: string | null
           webhook_configured?: boolean | null
           webhook_url?: string | null
@@ -301,6 +346,9 @@ export type Database = {
           response_delay_max?: number | null
           response_delay_min?: number | null
           seller_id?: string
+          typing_duration_max?: number | null
+          typing_duration_min?: number | null
+          typing_enabled?: boolean | null
           updated_at?: string | null
           webhook_configured?: boolean | null
           webhook_url?: string | null

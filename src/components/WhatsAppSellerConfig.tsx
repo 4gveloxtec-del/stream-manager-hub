@@ -279,17 +279,42 @@ export function WhatsAppSellerConfig() {
     );
   }
 
-  // Show warning if global API is inactive
-  if (!isApiActive) {
+  // Show warning if global API is inactive - but allow saving instance name
+  const apiInactive = !isApiActive;
+
+  // If API is inactive, show warning but allow configuration
+  if (apiInactive && !formData.instance_name) {
     return (
       <div className="space-y-4">
-        <Alert variant="destructive">
-          <PowerOff className="h-4 w-4" />
-          <AlertDescription>
-            A API WhatsApp está desativada pelo administrador. 
-            Todas as automações estão pausadas. Use o modo manual abaixo.
+        <Alert className="border-warning bg-warning/10">
+          <AlertCircle className="h-4 w-4 text-warning" />
+          <AlertDescription className="text-warning-foreground">
+            <strong>Aguardando ativação da API pelo administrador.</strong>
+            <br />
+            Você pode configurar sua instância agora. Quando a API for ativada, 
+            basta escanear o QR Code para começar a usar.
           </AlertDescription>
         </Alert>
+
+        {/* Allow saving instance name even with API inactive */}
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Nome da Sua Instância</Label>
+            <Input
+              value={formData.instance_name}
+              onChange={(e) => setFormData({ ...formData, instance_name: e.target.value })}
+              placeholder="minha-revenda"
+            />
+            <p className="text-xs text-muted-foreground">
+              Configure agora para ficar pronto quando a API for ativada
+            </p>
+          </div>
+
+          <Button onClick={handleSave} disabled={isSaving || !formData.instance_name}>
+            {isSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+            Salvar Configuração
+          </Button>
+        </div>
         
         <div className="p-4 rounded-lg bg-muted/50 border text-center">
           <p className="text-sm text-muted-foreground mb-2">
@@ -357,6 +382,17 @@ export function WhatsAppSellerConfig() {
         </div>
       )}
 
+      {/* API Inactive Warning Banner */}
+      {apiInactive && (
+        <Alert className="border-warning bg-warning/10">
+          <AlertCircle className="h-4 w-4 text-warning" />
+          <AlertDescription className="text-warning-foreground">
+            <strong>API aguardando ativação.</strong> Você pode salvar suas configurações, 
+            mas a conexão via QR Code só estará disponível quando o administrador ativar a API.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Form */}
       <div className="space-y-4">
         <div className="space-y-2">
@@ -389,12 +425,17 @@ export function WhatsAppSellerConfig() {
           </Button>
           
           {!formData.is_connected ? (
-            <Button variant="secondary" onClick={getQrCode} disabled={isLoadingQr || !formData.instance_name}>
+            <Button 
+              variant="secondary" 
+              onClick={getQrCode} 
+              disabled={isLoadingQr || !formData.instance_name || apiInactive}
+              title={apiInactive ? 'Aguardando ativação da API pelo administrador' : ''}
+            >
               {isLoadingQr ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <QrCode className="h-4 w-4 mr-2" />}
-              Conectar WhatsApp
+              {apiInactive ? 'API Inativa' : 'Conectar WhatsApp'}
             </Button>
           ) : (
-            <Button variant="secondary" onClick={sendTestMessage}>
+            <Button variant="secondary" onClick={sendTestMessage} disabled={apiInactive}>
               <Send className="h-4 w-4 mr-2" />
               Testar
             </Button>

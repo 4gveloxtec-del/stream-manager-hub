@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useWhatsAppGlobalConfig } from '@/hooks/useWhatsAppGlobalConfig';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { 
   Save, 
@@ -12,7 +14,9 @@ import {
   Loader2,
   Shield,
   Power,
-  PowerOff
+  PowerOff,
+  Users,
+  Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -24,6 +28,8 @@ export function WhatsAppGlobalConfig() {
     error: configError, 
     saveConfig, 
   } = useWhatsAppGlobalConfig();
+  
+  const [pendingSellersCount, setPendingSellersCount] = useState(0);
   
   const [showToken, setShowToken] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -43,6 +49,20 @@ export function WhatsAppGlobalConfig() {
       });
     }
   }, [config]);
+
+  // Fetch count of sellers waiting for API activation
+  useEffect(() => {
+    const fetchPendingSellers = async () => {
+      const { count } = await supabase
+        .from('whatsapp_seller_instances')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_connected', false);
+      
+      setPendingSellersCount(count || 0);
+    };
+    
+    fetchPendingSellers();
+  }, []);
 
   // Save config
   const handleSave = async () => {
@@ -108,7 +128,33 @@ export function WhatsAppGlobalConfig() {
               : 'Todas as automações estão desativadas'}
           </p>
         </div>
+        <div className="flex flex-col items-end gap-1">
+          <Badge variant={formData.is_active ? "default" : "destructive"}>
+            {formData.is_active ? 'ATIVA' : 'INATIVA'}
+          </Badge>
+        </div>
       </div>
+
+      {/* Pending Sellers Alert */}
+      {pendingSellersCount > 0 && !formData.is_active && (
+        <Alert className="border-warning bg-warning/10">
+          <Clock className="h-4 w-4 text-warning" />
+          <AlertDescription className="text-warning-foreground">
+            <strong>{pendingSellersCount} revendedor(es)</strong> configuraram suas instâncias 
+            e estão aguardando a ativação da API para conectar o WhatsApp.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Active Sellers Info */}
+      {pendingSellersCount > 0 && formData.is_active && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50 border">
+          <Users className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">
+            <strong>{pendingSellersCount}</strong> instância(s) aguardando conexão via QR Code
+          </span>
+        </div>
+      )}
 
       {/* Admin Notice */}
       <Alert>

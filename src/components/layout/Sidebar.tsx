@@ -338,8 +338,11 @@ export function Sidebar() {
 
     return (
       <>
-        {/* Mobile Header */}
-        <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-gradient-to-r from-sidebar via-sidebar to-sidebar/95 border-b border-sidebar-border/50 backdrop-blur-lg flex items-center justify-between px-4">
+        {/* Mobile Header with safe area */}
+        <header 
+          className="fixed left-0 right-0 z-50 h-14 bg-gradient-to-r from-sidebar via-sidebar to-sidebar/95 border-b border-sidebar-border/50 backdrop-blur-lg flex items-center justify-between px-4"
+          style={{ top: 'env(safe-area-inset-top)' }}
+        >
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/20">
               <Sparkles className="w-4 h-4 text-primary-foreground" />
@@ -351,7 +354,7 @@ export function Sidebar() {
               variant="ghost"
               size="icon"
               onClick={handleRefresh}
-              className="h-9 w-9 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-xl"
+              className="h-10 w-10 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-xl touch-target"
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
@@ -359,19 +362,23 @@ export function Sidebar() {
               variant="ghost"
               size="icon"
               onClick={handleShare}
-              className="h-9 w-9 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-xl"
+              className="h-10 w-10 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 rounded-xl touch-target"
             >
               <Share2 className="h-4 w-4" />
             </Button>
           </div>
         </header>
-        <div className="h-14" />
+        {/* Spacer for fixed header + safe area */}
+        <div style={{ height: 'calc(3.5rem + env(safe-area-inset-top))' }} />
         
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent side="left" className={cn(
-            "p-0 bg-sidebar border-sidebar-border/50",
-            isIconsOnly ? "w-20" : "w-72"
-          )}>
+          <SheetContent 
+            side="left" 
+            className={cn(
+              "p-0 bg-sidebar border-sidebar-border/50 max-w-[85vw]",
+              isIconsOnly ? "w-20" : "w-72"
+            )}
+          >
             <SidebarContent onNavigate={() => setOpen(false)} />
           </SheetContent>
         </Sheet>

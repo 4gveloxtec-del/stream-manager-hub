@@ -169,9 +169,49 @@ export function BulkImportClients({ plans }: BulkImportClientsProps) {
     };
 
     const delimiter = detectDelimiter(lines[0]);
+    
+    const splitRow = (row: string) =>
+      row.split(delimiter).map(p => (p || '').trim().replace(/^["']|["']$/g, ''));
+
+    const normalizeHeader = (h: string) =>
+      (h || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/-+/g, '_');
 
     const firstLine = lines[0].toLowerCase();
-    const hasHeader = ['nome', 'name', 'telefone', 'phone', 'login', 'usuario', 'usuário', 'senha', 'password', 'categoria', 'category', 'servidor', 'server', 'valor', 'validade'].some(k => firstLine.includes(k));
+    const hasHeader = ['nome', 'name', 'telefone', 'phone', 'login', 'usuario', 'usuário', 'senha', 'password', 'categoria', 'category', 'servidor', 'server', 'valor', 'validade', 'vencimento', 'data_vencimento', 'preço', 'preco', 'plano'].some(k => firstLine.includes(k));
+    
+    // Parse headers if present to detect exported format
+    const headers = hasHeader ? splitRow(lines[0]).map(normalizeHeader) : null;
+    
+    const findHeaderIndex = (aliases: string[]) => {
+      if (!headers) return null;
+      const aliasSet = new Set(aliases);
+      const idx = headers.findIndex(h => aliasSet.has(h));
+      return idx >= 0 ? idx : null;
+    };
+    
+    // Detect exported format with header mapping
+    const headerIdx = hasHeader ? {
+      name: findHeaderIndex(['nome', 'name']),
+      phone: findHeaderIndex(['telefone', 'phone', 'whatsapp', 'celular']),
+      email: findHeaderIndex(['email', 'e_mail']),
+      telegram: findHeaderIndex(['telegram']),
+      category: findHeaderIndex(['categoria', 'category']),
+      server: findHeaderIndex(['servidor', 'server']),
+      login: findHeaderIndex(['login', 'usuario', 'usuário', 'user', 'username']),
+      password: findHeaderIndex(['senha', 'password', 'pass']),
+      server2: findHeaderIndex(['servidor_2', 'server_2', 'servidor2']),
+      login2: findHeaderIndex(['login_2', 'login2']),
+      password2: findHeaderIndex(['senha_2', 'senha2', 'password_2']),
+      plan: findHeaderIndex(['plano', 'plan', 'plan_name']),
+      price: findHeaderIndex(['preço', 'preco', 'price', 'valor', 'plan_price']),
+      expiration: findHeaderIndex(['data_vencimento', 'vencimento', 'validade', 'expiration_date', 'expiration', 'expires_at']),
+      device: findHeaderIndex(['dispositivo', 'device']),
+      dns: findHeaderIndex(['dns']),
+      is_paid: findHeaderIndex(['pago', 'is_paid', 'paid']),
+      pending: findHeaderIndex(['valor_pendente', 'pending_amount', 'pendente']),
+      notes: findHeaderIndex(['observações', 'observacoes', 'notes', 'obs']),
+    } : null;
+    
     const dataLines = hasHeader ? lines.slice(1) : lines;
 
     const isUuid = (value: string) =>
@@ -222,11 +262,62 @@ export function BulkImportClients({ plans }: BulkImportClientsProps) {
     };
 
     return dataLines.map((line, index) => {
-      // Split keeping empty values
-      const rawParts = line.split(delimiter).map(p => (p || '').trim().replace(/^["']|["']$/g, ''));
-      const parts = rawParts;
+      const parts = splitRow(line);
+      const rowNumber = index + (hasHeader ? 2 : 1);
+      
+      // If we have header mapping (exported format), use it
+      if (hasHeader && headerIdx) {
+        const get = (idx: number | null) => (idx === null ? '' : (parts[idx] ?? ''));
+        
+        const name = get(headerIdx.name);
+        const phone = get(headerIdx.phone);
+        const login = get(headerIdx.login);
+        const password = get(headerIdx.password);
+        const categoryInput = get(headerIdx.category);
+        const server = get(headerIdx.server);
+        const priceInput = get(headerIdx.price);
+        const expirationInput = get(headerIdx.expiration);
+        
+        if (!name || name.length < 2 || isUuid(name)) {
+          return { 
+            name: name || '', phone: '', login: '', password: '', category: defaultCategory, 
+            server: '', price: null, expiration_date: null, 
+            detected_plan_id: null, detected_plan_name: null, detected_duration_days: null,
+            valid: false, error: `Linha ${rowNumber}: Nome é obrigatório` 
+          };
+        }
+        
+        // Use category from input or default
+        let category = defaultCategory;
+        if (categoryInput) {
+          const normalized = normalizeCategory(categoryInput);
+          category = normalized || categoryInput.toUpperCase();
+        }
+        
+        const phoneDigits = digitsOnly(phone);
+        const parsedPrice = parsePrice(priceInput);
+        const parsedExpiration = parseDate(expirationInput);
+        
+        // Auto-detect plan based on expiration date and category
+        const detectedPlan = findMatchingPlan(parsedExpiration, category);
+        
+        return {
+          name: name.slice(0, 100),
+          phone: phoneDigits.slice(0, 20),
+          login: login.slice(0, 100),
+          password: password.slice(0, 100),
+          category,
+          server: server.slice(0, 100),
+          price: parsedPrice,
+          expiration_date: parsedExpiration,
+          detected_plan_id: detectedPlan?.id || null,
+          detected_plan_name: detectedPlan?.name || null,
+          detected_duration_days: detectedPlan?.duration_days || null,
+          valid: true
+        };
+      }
 
-      // Standard: Nome,Telefone,Usuário,Senha,Categoria,Servidor,Valor,Validade
+      // Fallback: Standard positional format: Nome,Telefone,Usuário,Senha,Categoria,Servidor,Valor,Validade
       let name = parts[0] || '';
       let phone = parts[1] || '';
       let login = parts[2] || '';
@@ -257,7 +348,7 @@ export function BulkImportClients({ plans }: BulkImportClientsProps) {
           name: '', phone: '', login: '', password: '', category: defaultCategory, 
           server: '', price: null, expiration_date: null, 
           detected_plan_id: null, detected_plan_name: null, detected_duration_days: null,
-          valid: false, error: `Linha ${index + (hasHeader ? 2 : 1)}: Nome é obrigatório` 
+          valid: false, error: `Linha ${rowNumber}: Nome é obrigatório` 
         };
       }
 

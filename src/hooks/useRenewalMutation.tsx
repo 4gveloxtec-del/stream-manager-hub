@@ -25,6 +25,30 @@ interface RenewalResult {
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
 
+// Helper to decrypt data using the crypto edge function
+async function decryptData(ciphertext: string | null): Promise<string> {
+  if (!ciphertext) return '';
+  
+  try {
+    const { data: session } = await supabase.auth.getSession();
+    const { data, error } = await supabase.functions.invoke('crypto', {
+      headers: {
+        Authorization: `Bearer ${session?.session?.access_token}`,
+      },
+      body: { action: 'decrypt', data: ciphertext },
+    });
+
+    if (error) {
+      console.error('Decryption error:', error);
+      return ciphertext; // Return original if decryption fails
+    }
+
+    return data.result || ciphertext;
+  } catch {
+    return ciphertext; // Return original if decryption fails
+  }
+}
+
 // Log errors to Supabase (background, non-blocking)
 async function logRenewalError(
   sellerId: string,
@@ -205,10 +229,14 @@ export function useRenewalMutation(userId: string | undefined) {
 
       console.log('[Renewal] Using template:', template.name);
 
-      // Replace variables in template
+      // Replace variables in template - decrypt login/password first
       const empresa = profile?.company_name || profile?.full_name || '';
-      const login = client?.login || '';
-      const senha = client?.password || '';
+      const [login, senha] = await Promise.all([
+        decryptData(client?.login || null),
+        decryptData(client?.password || null),
+      ]);
+
+      console.log('[Renewal] Credentials decrypted:', { hasLogin: !!login, hasPassword: !!senha });
 
       const message = template.message
         .replace(/{nome}/gi, data.clientName)

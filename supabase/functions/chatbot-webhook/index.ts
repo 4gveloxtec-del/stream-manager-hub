@@ -639,6 +639,36 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Diagnostic endpoint: GET request returns debug info
+    if (req.method === "GET") {
+      const { data: instances } = await supabase
+        .from("whatsapp_seller_instances")
+        .select("instance_name, seller_id, is_connected, instance_blocked, plan_status");
+      
+      const { data: globalConfig } = await supabase
+        .from("whatsapp_global_config")
+        .select("api_url, is_active")
+        .maybeSingle();
+      
+      const { data: chatbotSettings } = await supabase
+        .from("chatbot_settings")
+        .select("seller_id, is_enabled");
+      
+      const { data: chatbotRules } = await supabase
+        .from("chatbot_rules")
+        .select("seller_id, name, is_active, trigger_text");
+      
+      return new Response(JSON.stringify({
+        status: "diagnostic",
+        instances: instances || [],
+        globalConfig: globalConfig ? { api_url: globalConfig.api_url, is_active: globalConfig.is_active } : null,
+        chatbotSettings: chatbotSettings || [],
+        chatbotRules: chatbotRules || [],
+      }, null, 2), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Parse webhook payload (normalize across versions)
     let rawPayload: Record<string, unknown> | null = null;
     try {

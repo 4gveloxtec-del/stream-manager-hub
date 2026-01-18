@@ -54,13 +54,13 @@ export function SharedCreditsSection({
   return (
     <div className="space-y-3">
       {/* Toggle Header */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30">
+      <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-border hover:border-primary/30 transition-colors">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-amber-500/20">
-            <Users className="h-4 w-4 text-amber-600" />
+          <div className="p-2 rounded-lg bg-primary/10">
+            <Users className="h-4 w-4 text-primary" />
           </div>
           <div>
-            <Label htmlFor="shared-credits-toggle" className="cursor-pointer font-medium">
+            <Label htmlFor="shared-credits-toggle" className="cursor-pointer font-medium text-sm">
               Créditos Compartilhados
             </Label>
             <p className="text-xs text-muted-foreground">
@@ -77,15 +77,17 @@ export function SharedCreditsSection({
 
       {/* Content - Only visible when enabled */}
       <Collapsible open={isEnabled}>
-        <CollapsibleContent className="animate-accordion-down">
-          <SharedCreditPicker
-            sellerId={sellerId}
-            category={category}
-            serverId={serverId}
-            planDurationDays={planDurationDays}
-            selectedCredit={selectedCredit}
-            onSelect={onSelect}
-          />
+        <CollapsibleContent className="animate-accordion-down pt-1">
+          <div className="rounded-lg border border-border bg-card/50 p-3">
+            <SharedCreditPicker
+              sellerId={sellerId}
+              category={category}
+              serverId={serverId}
+              planDurationDays={planDurationDays}
+              selectedCredit={selectedCredit}
+              onSelect={onSelect}
+            />
+          </div>
         </CollapsibleContent>
       </Collapsible>
     </div>

@@ -124,40 +124,40 @@ export function AppsSection({
   const showServerApps = (category === 'IPTV' || category === 'P2P') && serverId;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* View Mode Control */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
+      <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-border">
         <div className="flex items-center gap-2">
           <AppWindow className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">Exibição de Apps</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <Button
             type="button"
-            variant={viewMode === 'server' ? 'default' : 'outline'}
+            variant={viewMode === 'server' ? 'default' : 'ghost'}
             size="sm"
             onClick={() => setViewMode('server')}
-            className="h-7 text-xs"
+            className="h-7 text-xs px-2"
           >
             <Server className="h-3 w-3 mr-1" />
             Servidor
           </Button>
           <Button
             type="button"
-            variant={viewMode === 'reseller' ? 'default' : 'outline'}
+            variant={viewMode === 'reseller' ? 'default' : 'ghost'}
             size="sm"
             onClick={() => setViewMode('reseller')}
-            className="h-7 text-xs"
+            className="h-7 text-xs px-2"
           >
             <Store className="h-3 w-3 mr-1" />
             Revendedor
           </Button>
           <Button
             type="button"
-            variant={viewMode === 'both' ? 'default' : 'outline'}
+            variant={viewMode === 'both' ? 'default' : 'ghost'}
             size="sm"
             onClick={() => setViewMode('both')}
-            className="h-7 text-xs"
+            className="h-7 text-xs px-2"
           >
             Ambos
           </Button>
@@ -166,13 +166,15 @@ export function AppsSection({
 
       {/* Server Apps Section */}
       {(viewMode === 'server' || viewMode === 'both') && showServerApps && (
-        <div className="space-y-3 p-4 rounded-lg bg-gradient-to-r from-blue-500/5 to-cyan-500/5 border border-blue-500/20">
+        <div className="space-y-3 p-4 rounded-lg bg-card border border-border">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Server className="h-4 w-4 text-blue-500" />
+              <div className="p-1.5 rounded-md bg-primary/10">
+                <Server className="h-4 w-4 text-primary" />
+              </div>
               <span className="font-medium text-sm">Apps do Servidor</span>
               {serverName && (
-                <Badge variant="outline" className="text-xs">
+                <Badge variant="secondary" className="text-xs font-normal">
                   {serverName}
                 </Badge>
               )}
@@ -259,25 +261,27 @@ export function AppsSection({
       {/* Reseller Apps Section */}
       {(viewMode === 'reseller' || viewMode === 'both') && (
         <Collapsible open={isResellerVisible} onOpenChange={setIsResellerVisible}>
-          <div className="space-y-3 p-4 rounded-lg bg-gradient-to-r from-violet-500/5 to-purple-500/5 border border-violet-500/20">
+          <div className="space-y-3 p-4 rounded-lg bg-card border border-border">
             <CollapsibleTrigger asChild>
-              <div className="flex items-center justify-between cursor-pointer">
+              <div className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity">
                 <div className="flex items-center gap-2">
-                  <Store className="h-4 w-4 text-violet-500" />
+                  <div className="p-1.5 rounded-md bg-accent/10">
+                    <Store className="h-4 w-4 text-accent-foreground" />
+                  </div>
                   <span className="font-medium text-sm">Apps do Revendedor</span>
-                  <Badge variant="outline" className="text-xs">
+                  <Badge variant="secondary" className="text-xs font-normal">
                     {externalApps.length + (hasPaidApps ? 1 : 0)} app(s)
                   </Badge>
                 </div>
-                <Button type="button" variant="ghost" size="sm" className="gap-1">
+                <Button type="button" variant="ghost" size="sm" className="gap-1 h-7 text-xs text-muted-foreground hover:text-foreground">
                   {isResellerVisible ? (
                     <>
-                      <EyeOff className="h-4 w-4" />
+                      <EyeOff className="h-3.5 w-3.5" />
                       Ocultar
                     </>
                   ) : (
                     <>
-                      <Eye className="h-4 w-4" />
+                      <Eye className="h-3.5 w-3.5" />
                       Mostrar
                     </>
                   )}
@@ -285,7 +289,7 @@ export function AppsSection({
               </div>
             </CollapsibleTrigger>
 
-            <CollapsibleContent className="space-y-4">
+            <CollapsibleContent className="space-y-4 pt-2">
               {/* External Apps */}
               <ClientExternalApps
                 clientId={clientId}
@@ -295,11 +299,11 @@ export function AppsSection({
               />
 
               {/* Legacy Paid Apps */}
-              <div className="space-y-3 pt-3 border-t border-border">
+              <div className="space-y-3 pt-3 border-t border-border/50">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <AppWindow className="h-4 w-4 text-amber-600" />
-                    <Label htmlFor="has_paid_apps" className="cursor-pointer text-sm">
+                    <AppWindow className="h-4 w-4 text-muted-foreground" />
+                    <Label htmlFor="has_paid_apps" className="cursor-pointer text-sm text-muted-foreground">
                       Apps Pagos (Legado)
                     </Label>
                   </div>
@@ -311,14 +315,14 @@ export function AppsSection({
                     }
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground/70">
                   Para novos cadastros, use "Apps Externos" acima.
                 </p>
 
                 {hasPaidApps && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">E-mail ou MAC</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">E-mail ou MAC</Label>
                       <Input
                         value={paidAppsData.email}
                         onChange={(e) => onPaidAppsChange(true, { ...paidAppsData, email: e.target.value })}
@@ -326,8 +330,8 @@ export function AppsSection({
                         className="h-9"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Senha</Label>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Senha</Label>
                       <Input
                         value={paidAppsData.password}
                         onChange={(e) => onPaidAppsChange(true, { ...paidAppsData, password: e.target.value })}

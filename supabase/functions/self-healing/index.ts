@@ -41,6 +41,59 @@ interface CheckResult {
   details?: Record<string, unknown>;
 }
 
+// Enviar notificação push para todos os admins
+async function sendAdminPushNotification(
+  supabase: SupabaseClient,
+  title: string,
+  body: string,
+  data?: Record<string, unknown>
+): Promise<void> {
+  try {
+    // Buscar todos os user_ids que são admins
+    const { data: adminRoles, error: rolesError } = await supabase
+      .from('user_roles')
+      .select('user_id')
+      .eq('role', 'admin');
+    
+    if (rolesError || !adminRoles?.length) {
+      console.log('No admins found for push notification');
+      return;
+    }
+    
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    
+    // Enviar notificação para cada admin
+    for (const admin of adminRoles) {
+      try {
+        const response = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseServiceKey}`,
+          },
+          body: JSON.stringify({
+            userId: admin.user_id,
+            title,
+            body,
+            data: data || {},
+            tag: 'system-health',
+            icon: '/admin-icon-192.png',
+          }),
+        });
+        
+        if (response.ok) {
+          console.log(`Push notification sent to admin: ${admin.user_id}`);
+        }
+      } catch (err) {
+        console.error(`Failed to send push to admin ${admin.user_id}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('Error sending admin push notifications:', err);
+  }
+}
+
 // Classificar severidade baseado em falhas consecutivas
 function getSeverity(consecutiveFailures: number): string {
   if (consecutiveFailures >= 5) return 'critical';
@@ -496,7 +549,50 @@ Deno.serve(async (req) => {
               results[component].repaired = repairResult.success;
               results[component].message = repairResult.message;
               
+              // Se o reparo falhou e é crítico, notificar admins
+              if (!repairResult.success && updatedStatus.consecutive_failures >= 3) {
+                if (config.notify_admin_on_critical) {
+                  await sendAdminPushNotification(
+                    supabase,
+                    '🚨 Problema Crítico - Sistema de Autocura',
+                    `Componente "${component}" com problema: ${result.error}. Reparo automático falhou.`,
+                    { 
+                      component, 
+                      error: result.error, 
+                      consecutiveFailures: updatedStatus.consecutive_failures,
+                      repairAttempts: updatedStatus.repair_attempts + 1
+                    }
+                  );
+                }
+              }
+              
               if (repairResult.success) break;
+            }
+            
+            // Se nenhum reparo funcionou e atingiu limite de tentativas
+            if (!results[component].repaired && updatedStatus.repair_attempts + 1 >= config.max_repair_attempts) {
+              if (config.notify_admin_on_critical) {
+                await sendAdminPushNotification(
+                  supabase,
+                  '⚠️ Limite de Reparos Atingido',
+                  `Componente "${component}" atingiu o limite de ${config.max_repair_attempts} tentativas de reparo. Intervenção manual necessária.`,
+                  { 
+                    component, 
+                    error: result.error, 
+                    maxAttempts: config.max_repair_attempts 
+                  }
+                );
+              }
+            }
+          } else if (updatedStatus.repair_attempts >= config.max_repair_attempts) {
+            // Já atingiu limite, notificar se crítico
+            if (updatedStatus.consecutive_failures >= 5 && config.notify_admin_on_critical) {
+              await sendAdminPushNotification(
+                supabase,
+                '🔴 Componente Crítico Sem Reparo',
+                `Componente "${component}" está em estado CRÍTICO há ${updatedStatus.consecutive_failures} verificações. Sem opções de reparo automático restantes.`,
+                { component, error: result.error, consecutiveFailures: updatedStatus.consecutive_failures }
+              );
             }
           }
         } else if (result.healthy && updatedStatus && updatedStatus.repair_attempts > 0) {
@@ -505,6 +601,16 @@ Deno.serve(async (req) => {
             .from('system_health_status')
             .update({ repair_attempts: 0 } as Record<string, unknown>)
             .eq('component_name', component);
+          
+          // Notificar que o componente se recuperou
+          if (updatedStatus.consecutive_failures > 0) {
+            await sendAdminPushNotification(
+              supabase,
+              '✅ Componente Recuperado',
+              `Componente "${component}" voltou ao normal após intervenção.`,
+              { component }
+            );
+          }
         }
       } catch (err) {
         console.error(`Error checking ${component}:`, err);

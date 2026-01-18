@@ -354,6 +354,10 @@ async function sendTextMessage(
     const formattedPhone = formatPhone(phone);
     const url = `${baseUrl}/message/sendText/${instanceName}`;
 
+    console.log(`[sendTextMessage] URL: ${url}`);
+    console.log(`[sendTextMessage] Phone: ${formattedPhone}`);
+    console.log(`[sendTextMessage] Instance: ${instanceName}`);
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -366,10 +370,11 @@ async function sendTextMessage(
       }),
     });
 
-    console.log(`Text message sent to ${formattedPhone}: ${response.ok}`);
+    const responseText = await response.text();
+    console.log(`[sendTextMessage] Response: ${response.status} - ${responseText}`);
     return response.ok;
   } catch (error) {
-    console.error("Error sending text:", error);
+    console.error("[sendTextMessage] Error:", error);
     return false;
   }
 }

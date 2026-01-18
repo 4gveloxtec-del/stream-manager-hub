@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useWhatsAppSellerInstance } from '@/hooks/useWhatsAppSellerInstance';
 import { useWhatsAppGlobalConfig } from '@/hooks/useWhatsAppGlobalConfig';
@@ -21,10 +21,21 @@ import {
   PowerOff,
   Ban,
   CreditCard,
-  Lock
+  Lock,
+  PartyPopper,
+  CheckCircle2,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import confetti from 'canvas-confetti';
 
 export function WhatsAppSellerConfig() {
   const { user, profile, isAdmin } = useAuth();
@@ -46,11 +57,50 @@ export function WhatsAppSellerConfig() {
   const [isRunningAutomation, setIsRunningAutomation] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoadingQr, setIsLoadingQr] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
   const [formData, setFormData] = useState({
     instance_name: '',
     auto_send_enabled: false,
     is_connected: false,
   });
+
+  // Celebration confetti effect
+  const triggerCelebration = useCallback(() => {
+    setShowCelebration(true);
+    
+    // Fire confetti
+    const duration = 3000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+
+    const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+
+    const interval = setInterval(() => {
+      const timeLeft = animationEnd - Date.now();
+      if (timeLeft <= 0) {
+        clearInterval(interval);
+        return;
+      }
+
+      const particleCount = 50 * (timeLeft / duration);
+      
+      confetti({
+        ...defaults,
+        particleCount,
+        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
+        colors: ['#22c55e', '#10b981', '#34d399', '#6ee7b7', '#a7f3d0'],
+      });
+      confetti({
+        ...defaults,
+        particleCount,
+        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
+        colors: ['#22c55e', '#10b981', '#34d399', '#6ee7b7', '#a7f3d0'],
+      });
+    }, 250);
+
+    // Auto close celebration after 5 seconds
+    setTimeout(() => setShowCelebration(false), 5000);
+  }, []);
 
   // Check if user has a paid plan (not in free trial)
   const hasPaidPlan = (() => {
@@ -177,14 +227,16 @@ export function WhatsAppSellerConfig() {
         // Check if this is a new connection (was disconnected before)
         const wasDisconnected = !formData.is_connected;
         
-        toast.success('WhatsApp conectado!');
         setFormData(prev => ({ ...prev, is_connected: true }));
         await updateConnectionStatus(true);
         setQrCode(null);
         
-        // Send welcome message if newly connected
+        // Celebrate and send welcome message if newly connected
         if (wasDisconnected) {
+          triggerCelebration();
           await sendWelcomeMessage();
+        } else {
+          toast.success('WhatsApp conectado!');
         }
       } else {
         toast.error('WhatsApp não conectado. Escaneie o QR Code.');
@@ -232,13 +284,15 @@ export function WhatsAppSellerConfig() {
         // Check if this is a new connection
         const wasDisconnected = !formData.is_connected;
         
-        toast.success('Já está conectado!');
         setFormData(prev => ({ ...prev, is_connected: true }));
         await updateConnectionStatus(true);
         
-        // Send welcome message if newly connected
+        // Celebrate and send welcome message if newly connected
         if (wasDisconnected) {
+          triggerCelebration();
           await sendWelcomeMessage();
+        } else {
+          toast.success('Já está conectado!');
         }
       } else {
         toast.error('Erro ao obter QR Code');
@@ -473,33 +527,52 @@ export function WhatsAppSellerConfig() {
         </div>
       </div>
 
-      {/* QR Code Display - Redesigned */}
+      {/* QR Code Display - Redesigned with Animation */}
       {qrCode && (
-        <div className="relative overflow-hidden rounded-2xl border-2 border-primary/30 bg-gradient-to-b from-background to-muted/30">
+        <div className="relative overflow-hidden rounded-2xl border-2 border-primary/30 bg-gradient-to-b from-background to-muted/30 animate-fade-in">
           {/* Header */}
           <div className="bg-primary/5 border-b border-primary/20 px-5 py-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center animate-pulse">
                 <QrCode className="h-5 w-5 text-primary" />
               </div>
               <div>
                 <h3 className="font-semibold text-foreground">Escaneie o QR Code</h3>
-                <p className="text-xs text-muted-foreground">Use o WhatsApp no seu celular</p>
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                  </span>
+                  Aguardando leitura...
+                </p>
               </div>
             </div>
           </div>
           
           {/* QR Code Container */}
           <div className="p-6 flex flex-col items-center">
-            <div className="relative">
-              {/* Decorative corner brackets */}
-              <div className="absolute -top-2 -left-2 w-6 h-6 border-l-4 border-t-4 border-primary rounded-tl-lg" />
-              <div className="absolute -top-2 -right-2 w-6 h-6 border-r-4 border-t-4 border-primary rounded-tr-lg" />
-              <div className="absolute -bottom-2 -left-2 w-6 h-6 border-l-4 border-b-4 border-primary rounded-bl-lg" />
-              <div className="absolute -bottom-2 -right-2 w-6 h-6 border-r-4 border-b-4 border-primary rounded-br-lg" />
+            <div className="relative group">
+              {/* Animated pulse ring */}
+              <div className="absolute inset-0 -m-4 rounded-2xl bg-primary/10 animate-ping opacity-20" style={{ animationDuration: '2s' }} />
+              <div className="absolute inset-0 -m-2 rounded-2xl bg-primary/5 animate-pulse" style={{ animationDuration: '1.5s' }} />
+              
+              {/* Decorative corner brackets with animation */}
+              <div className="absolute -top-2 -left-2 w-6 h-6 border-l-4 border-t-4 border-primary rounded-tl-lg transition-all duration-300 group-hover:scale-110" />
+              <div className="absolute -top-2 -right-2 w-6 h-6 border-r-4 border-t-4 border-primary rounded-tr-lg transition-all duration-300 group-hover:scale-110" />
+              <div className="absolute -bottom-2 -left-2 w-6 h-6 border-l-4 border-b-4 border-primary rounded-bl-lg transition-all duration-300 group-hover:scale-110" />
+              <div className="absolute -bottom-2 -right-2 w-6 h-6 border-r-4 border-b-4 border-primary rounded-br-lg transition-all duration-300 group-hover:scale-110" />
+              
+              {/* Rotating glow effect */}
+              <div 
+                className="absolute inset-0 -m-1 rounded-xl opacity-30"
+                style={{
+                  background: 'conic-gradient(from 0deg, transparent, hsl(var(--primary)), transparent, hsl(var(--primary)), transparent)',
+                  animation: 'spin 3s linear infinite',
+                }}
+              />
               
               {/* QR Code Image */}
-              <div className="p-3 bg-white rounded-xl shadow-lg">
+              <div className="relative p-3 bg-white rounded-xl shadow-lg transition-transform duration-300 hover:scale-[1.02]">
                 <img 
                   src={qrCode} 
                   alt="QR Code WhatsApp" 
@@ -508,17 +581,17 @@ export function WhatsAppSellerConfig() {
               </div>
             </div>
             
-            {/* Instructions */}
+            {/* Instructions with staggered animation */}
             <div className="mt-6 space-y-3 text-center max-w-xs">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center animate-fade-in" style={{ animationDelay: '0.1s' }}>
                 <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">1</div>
                 <span>Abra o WhatsApp no celular</span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center animate-fade-in" style={{ animationDelay: '0.2s' }}>
                 <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">2</div>
                 <span>Vá em <strong>Dispositivos conectados</strong></span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center animate-fade-in" style={{ animationDelay: '0.3s' }}>
                 <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">3</div>
                 <span>Toque em <strong>Conectar dispositivo</strong></span>
               </div>
@@ -526,7 +599,8 @@ export function WhatsAppSellerConfig() {
             
             <Button 
               onClick={checkConnection} 
-              className="mt-6 rounded-xl px-6"
+              className="mt-6 rounded-xl px-6 animate-fade-in"
+              style={{ animationDelay: '0.4s' }}
               disabled={isCheckingConnection}
             >
               {isCheckingConnection ? (
@@ -539,6 +613,54 @@ export function WhatsAppSellerConfig() {
           </div>
         </div>
       )}
+
+      {/* Celebration Dialog */}
+      <Dialog open={showCelebration} onOpenChange={setShowCelebration}>
+        <DialogContent className="sm:max-w-md border-success/30 bg-gradient-to-b from-background to-success/5">
+          <DialogHeader className="text-center">
+            <div className="mx-auto mb-4 relative">
+              <div className="w-20 h-20 rounded-full bg-success/20 flex items-center justify-center animate-scale-in">
+                <CheckCircle2 className="h-10 w-10 text-success" />
+              </div>
+              <Sparkles className="absolute -top-1 -right-1 h-6 w-6 text-yellow-500 animate-pulse" />
+              <Sparkles className="absolute -bottom-1 -left-1 h-5 w-5 text-yellow-500 animate-pulse" style={{ animationDelay: '0.5s' }} />
+            </div>
+            <DialogTitle className="text-2xl font-bold text-center flex items-center justify-center gap-2">
+              <PartyPopper className="h-6 w-6 text-primary" />
+              Conectado com Sucesso!
+              <PartyPopper className="h-6 w-6 text-primary scale-x-[-1]" />
+            </DialogTitle>
+            <DialogDescription className="text-center pt-2 space-y-3">
+              <p className="text-base">
+                Seu WhatsApp foi conectado e está pronto para enviar mensagens automáticas!
+              </p>
+              <div className="flex flex-col gap-2 pt-3 text-sm">
+                <div className="flex items-center gap-2 justify-center text-success">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Notificações automáticas ativadas</span>
+                </div>
+                <div className="flex items-center gap-2 justify-center text-success">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Lembretes de vencimento configurados</span>
+                </div>
+                <div className="flex items-center gap-2 justify-center text-success">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Mensagens de boas-vindas prontas</span>
+                </div>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-center pt-4">
+            <Button 
+              onClick={() => setShowCelebration(false)} 
+              className="rounded-xl px-8"
+            >
+              <Sparkles className="h-4 w-4 mr-2" />
+              Começar a usar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* API Inactive Warning Banner */}
       {apiInactive && (

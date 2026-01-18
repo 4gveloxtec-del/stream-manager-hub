@@ -4,8 +4,14 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { MessageCircle, Copy, Clock } from 'lucide-react';
+import { MessageCircle, Copy, Clock, Send, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface Client {
   id: string;
@@ -30,6 +36,35 @@ interface NotificationTracking {
 
 export function ManualMessageSender({ client, onMessageSent }: ManualMessageSenderProps) {
   const { user, profile } = useAuth();
+  const [sendingType, setSendingType] = useState<string | null>(null);
+
+  // Fetch WhatsApp seller instance
+  const { data: sellerInstance } = useQuery({
+    queryKey: ['whatsapp-instance', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('whatsapp_seller_instances')
+        .select('*')
+        .eq('seller_id', user!.id)
+        .maybeSingle();
+      if (error) return null;
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
+  // Fetch global config
+  const { data: globalConfig } = useQuery({
+    queryKey: ['whatsapp-global-config'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('whatsapp_global_config')
+        .select('*')
+        .maybeSingle();
+      if (error) return null;
+      return data;
+    },
+  });
 
   const { data: templates } = useQuery({
     queryKey: ['templates', user?.id],
@@ -44,7 +79,7 @@ export function ManualMessageSender({ client, onMessageSent }: ManualMessageSend
     enabled: !!user?.id,
   });
 
-  const { data: sentNotifications } = useQuery({
+  const { data: sentNotifications, refetch: refetchNotifications } = useQuery({
     queryKey: ['client-notifications', client.id],
     queryFn: async () => {
       try {
@@ -94,6 +129,73 @@ export function ManualMessageSender({ client, onMessageSent }: ManualMessageSend
     return sentNotifications?.some(n => n.notification_type === type);
   };
 
+  const canSendViaApi = sellerInstance?.is_connected && 
+    !sellerInstance?.instance_blocked && 
+    globalConfig?.is_active &&
+    globalConfig?.api_url &&
+    globalConfig?.api_token;
+
+  // Send message via WhatsApp API
+  const sendViaApi = async (type: string, templateType: string) => {
+    if (!client.phone) {
+      toast.error('Cliente sem telefone');
+      return;
+    }
+
+    const template = getTemplateForType(templateType);
+    if (!template) {
+      toast.error('Template não encontrado');
+      return;
+    }
+
+    setSendingType(type);
+    
+    try {
+      const message = replaceVariables(template.message);
+      let phone = client.phone.replace(/\D/g, '');
+      if (!phone.startsWith('55') && (phone.length === 10 || phone.length === 11)) {
+        phone = '55' + phone;
+      }
+
+      const { data, error } = await supabase.functions.invoke('evolution-api', {
+        body: {
+          action: 'send_message',
+          config: {
+            api_url: globalConfig!.api_url,
+            api_token: globalConfig!.api_token,
+            instance_name: sellerInstance!.instance_name,
+          },
+          phone,
+          message,
+        },
+      });
+
+      if (error) throw error;
+      
+      if (data.success) {
+        // Record notification sent
+        await supabase.from('client_notification_tracking' as any).insert({
+          client_id: client.id,
+          seller_id: user!.id,
+          notification_type: type,
+          expiration_cycle_date: client.expiration_date,
+          sent_via: 'api',
+        });
+        
+        toast.success('Mensagem enviada via API!');
+        refetchNotifications();
+        onMessageSent?.();
+      } else {
+        toast.error('Erro: ' + (data.error || 'Falha no envio'));
+      }
+    } catch (error: any) {
+      toast.error('Erro ao enviar: ' + error.message);
+    } finally {
+      setSendingType(null);
+    }
+  };
+
+  // Send message via WhatsApp Web (manual)
   const sendManualMessage = async (type: string, templateType: string) => {
     if (!client.phone) {
       toast.error('Cliente sem telefone');
@@ -123,6 +225,7 @@ export function ManualMessageSender({ client, onMessageSent }: ManualMessageSend
         sent_via: 'manual',
       });
       toast.success('Mensagem preparada!');
+      refetchNotifications();
       onMessageSent?.();
     } catch (error) {
       console.error('Error:', error);
@@ -151,18 +254,52 @@ export function ManualMessageSender({ client, onMessageSent }: ManualMessageSend
     <div className="flex flex-wrap gap-2">
       {messageButtons.map((button) => {
         const isSent = isNotificationSent(button.type);
+        const isSending = sendingType === button.type;
+        
         return (
           <div key={button.type} className="flex items-center gap-1">
-            <Button
-              variant={isSent ? "secondary" : "outline"}
-              size="sm"
-              className={cn("gap-1.5", isSent && "opacity-50")}
-              onClick={() => sendManualMessage(button.type, button.templateType)}
-              disabled={isSent}
-            >
-              {isSent ? <Clock className="h-3 w-3" /> : <MessageCircle className="h-3 w-3" />}
-              {button.label}
-            </Button>
+            {canSendViaApi ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant={isSent ? "secondary" : "outline"}
+                    size="sm"
+                    className={cn("gap-1.5", isSent && "opacity-50")}
+                    disabled={isSent || isSending}
+                  >
+                    {isSending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : isSent ? (
+                      <Clock className="h-3 w-3" />
+                    ) : (
+                      <MessageCircle className="h-3 w-3" />
+                    )}
+                    {button.label}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => sendViaApi(button.type, button.templateType)}>
+                    <Send className="h-4 w-4 mr-2 text-green-500" />
+                    Enviar via API (automático)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => sendManualMessage(button.type, button.templateType)}>
+                    <MessageCircle className="h-4 w-4 mr-2 text-blue-500" />
+                    Abrir WhatsApp Web (manual)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                variant={isSent ? "secondary" : "outline"}
+                size="sm"
+                className={cn("gap-1.5", isSent && "opacity-50")}
+                onClick={() => sendManualMessage(button.type, button.templateType)}
+                disabled={isSent}
+              >
+                {isSent ? <Clock className="h-3 w-3" /> : <MessageCircle className="h-3 w-3" />}
+                {button.label}
+              </Button>
+            )}
             <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => copyMessage(button.templateType)}>
               <Copy className="h-3 w-3" />
             </Button>

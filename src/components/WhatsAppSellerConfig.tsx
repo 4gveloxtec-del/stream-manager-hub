@@ -106,6 +106,45 @@ export function WhatsAppSellerConfig() {
     }
   };
 
+  // Send welcome message when connected
+  const sendWelcomeMessage = async () => {
+    if (!globalConfig?.api_url || !globalConfig?.api_token || !profile?.whatsapp) {
+      return; // Skip if no config or no WhatsApp number
+    }
+
+    try {
+      let phone = profile.whatsapp.replace(/\D/g, '');
+      if (!phone.startsWith('55') && (phone.length === 10 || phone.length === 11)) {
+        phone = '55' + phone;
+      }
+
+      const companyName = (profile as any)?.company_name || profile?.full_name || 'Revendedor';
+      const message = `✅ *WhatsApp Conectado com Sucesso!*\n\n` +
+        `Olá ${companyName}!\n\n` +
+        `Sua instância *${formData.instance_name}* foi conectada e está pronta para enviar mensagens automáticas.\n\n` +
+        `🔔 A partir de agora, seus clientes receberão notificações de vencimento automaticamente.\n\n` +
+        `📱 Acesse o sistema para configurar suas preferências de envio.`;
+
+      await supabase.functions.invoke('evolution-api', {
+        body: {
+          action: 'send_message',
+          config: {
+            api_url: globalConfig.api_url,
+            api_token: globalConfig.api_token,
+            instance_name: formData.instance_name,
+          },
+          phone,
+          message,
+        },
+      });
+
+      console.log('Welcome message sent to seller');
+    } catch (error) {
+      console.error('Error sending welcome message:', error);
+      // Don't show error to user - this is a background task
+    }
+  };
+
   // Check connection
   const checkConnection = async () => {
     if (!formData.instance_name) {
@@ -135,10 +174,18 @@ export function WhatsAppSellerConfig() {
       if (error) throw error;
 
       if (data.connected) {
+        // Check if this is a new connection (was disconnected before)
+        const wasDisconnected = !formData.is_connected;
+        
         toast.success('WhatsApp conectado!');
         setFormData(prev => ({ ...prev, is_connected: true }));
         await updateConnectionStatus(true);
         setQrCode(null);
+        
+        // Send welcome message if newly connected
+        if (wasDisconnected) {
+          await sendWelcomeMessage();
+        }
       } else {
         toast.error('WhatsApp não conectado. Escaneie o QR Code.');
         setFormData(prev => ({ ...prev, is_connected: false }));
@@ -182,9 +229,17 @@ export function WhatsAppSellerConfig() {
         setQrCode(data.qrcode);
         toast.info('Escaneie o QR Code com seu WhatsApp');
       } else if (data.connected) {
+        // Check if this is a new connection
+        const wasDisconnected = !formData.is_connected;
+        
         toast.success('Já está conectado!');
         setFormData(prev => ({ ...prev, is_connected: true }));
         await updateConnectionStatus(true);
+        
+        // Send welcome message if newly connected
+        if (wasDisconnected) {
+          await sendWelcomeMessage();
+        }
       } else {
         toast.error('Erro ao obter QR Code');
       }

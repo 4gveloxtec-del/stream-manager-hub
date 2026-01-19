@@ -11,15 +11,37 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  
+  let jobId: string | null = null;
+
+  // Helper to save error to job before returning
+  const saveJobError = async (errorMessage: string) => {
+    if (jobId) {
+      try {
+        await supabase
+          .from('backup_import_jobs')
+          .update({
+            status: 'failed',
+            errors: [errorMessage],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', jobId);
+      } catch (e) {
+        console.error('Failed to save job error:', e);
+      }
+    }
+  };
+
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    console.log(`=== COMPLETE-BACKUP-IMPORT STARTED ===`);
     
     // Verify admin
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.error('No authorization header');
       return new Response(
         JSON.stringify({ error: 'Authorization required' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -30,11 +52,14 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
     if (authError || !user) {
+      console.error('Auth error:', authError?.message);
       return new Response(
         JSON.stringify({ error: 'Invalid authentication' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    console.log(`User authenticated: ${user.email}`);
 
     // Check if user is admin
     const { data: roleData } = await supabase
@@ -44,19 +69,47 @@ serve(async (req) => {
       .single();
 
     if (roleData?.role !== 'admin') {
+      console.error('User is not admin');
       return new Response(
         JSON.stringify({ error: 'Admin access required' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const { backup, mode, modules, jobId } = await req.json();
+    console.log('Admin role verified, parsing request body...');
+
+    // Parse request body with error handling
+    let requestBody: any;
+    try {
+      requestBody = await req.json();
+      console.log('Request body parsed successfully');
+    } catch (parseError) {
+      console.error('Failed to parse request body:', parseError);
+      return new Response(
+        JSON.stringify({ error: 'Falha ao processar o arquivo de backup. Verifique se o JSON é válido.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { backup, mode, modules, jobId: receivedJobId } = requestBody;
+    jobId = receivedJobId;
     
-    console.log(`=== IMPORT STARTED ===`);
+    console.log(`=== IMPORT CONFIG ===`);
     console.log(`Admin: ${user.email}, Mode: ${mode}, JobId: ${jobId}`);
     console.log(`Backup keys:`, Object.keys(backup || {}));
     console.log(`Data keys:`, Object.keys(backup?.data || {}));
-    console.log(`Stats:`, JSON.stringify(backup?.stats || {}));
+    
+    // Immediately update job to "processing" so user sees progress
+    if (jobId) {
+      await supabase
+        .from('backup_import_jobs')
+        .update({
+          status: 'validating',
+          progress: 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', jobId);
+    }
     
     // Accept multiple backup formats - be very flexible
     const hasValidData = backup && backup.data && typeof backup.data === 'object';
@@ -70,10 +123,12 @@ serve(async (req) => {
     console.log(`Validation: hasValidData=${hasValidData}, isNewFormat=${isNewFormat}, isLegacyV3=${isLegacyV3}, isCleanLogical=${isCleanLogical}, hasAnyData=${hasAnyData}`);
     
     if (!isValidFormat) {
+      const errorMsg = 'Formato de backup inválido. O arquivo não contém dados válidos para importação.';
       console.error('Invalid backup format');
+      await saveJobError(errorMsg);
       return new Response(
         JSON.stringify({ 
-          error: 'Formato de backup inválido. O arquivo não contém dados válidos para importação.',
+          error: errorMsg,
           debug: {
             hasValidData,
             isNewFormat,
@@ -87,6 +142,8 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    
+    console.log('Backup format validated successfully');
 
     const results = {
       success: true,
@@ -1142,32 +1199,16 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('=== IMPORT ERROR ===', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('=== IMPORT ERROR ===', errorMessage);
+    console.error('Stack:', error instanceof Error ? error.stack : 'N/A');
     
-    // Try to update job with error status
-    try {
-      const reqClone = await req.clone().json().catch(() => ({ jobId: null })) as any;
-      if (reqClone?.jobId) {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-        const supabase = createClient(supabaseUrl, supabaseServiceKey);
-        
-        await supabase
-          .from('backup_import_jobs')
-          .update({
-            status: 'error',
-            errors: [error instanceof Error ? error.message : 'Unknown error'],
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', reqClone.jobId);
-      }
-    } catch (e) {
-      console.error('Failed to update job with error:', e);
-    }
+    // Save error to job using the captured jobId
+    await saveJobError(errorMessage);
     
     return new Response(
       JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
         stack: error instanceof Error ? error.stack : undefined
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

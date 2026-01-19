@@ -41,6 +41,54 @@ export type Database = {
         }
         Relationships: []
       }
+      backup_import_jobs: {
+        Row: {
+          admin_id: string
+          created_at: string
+          errors: Json | null
+          id: string
+          mode: string
+          modules: Json | null
+          processed_items: number
+          progress: number
+          restored: Json | null
+          status: string
+          total_items: number
+          updated_at: string
+          warnings: Json | null
+        }
+        Insert: {
+          admin_id: string
+          created_at?: string
+          errors?: Json | null
+          id?: string
+          mode?: string
+          modules?: Json | null
+          processed_items?: number
+          progress?: number
+          restored?: Json | null
+          status?: string
+          total_items?: number
+          updated_at?: string
+          warnings?: Json | null
+        }
+        Update: {
+          admin_id?: string
+          created_at?: string
+          errors?: Json | null
+          id?: string
+          mode?: string
+          modules?: Json | null
+          processed_items?: number
+          progress?: number
+          restored?: Json | null
+          status?: string
+          total_items?: number
+          updated_at?: string
+          warnings?: Json | null
+        }
+        Relationships: []
+      }
       bills_to_pay: {
         Row: {
           amount: number

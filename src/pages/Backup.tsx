@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -108,10 +109,46 @@ export default function Backup() {
     errors: string[];
     warnings?: string[];
   } | null>(null);
+
+  const [importJobId, setImportJobId] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importProcessed, setImportProcessed] = useState(0);
+  const [importTotal, setImportTotal] = useState(0);
+
   const [selectedModules, setSelectedModules] = useState<string[]>(
     moduleConfig.map(m => m.key)
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!importJobId || !isRestoring) return;
+
+    const channel = supabase
+      .channel(`backup-import-job:${importJobId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'backup_import_jobs',
+          filter: `id=eq.${importJobId}`,
+        },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (typeof row.progress === 'number') setImportProgress(row.progress);
+          if (typeof row.status === 'string') setImportStatus(row.status);
+          if (typeof row.processed_items === 'number') setImportProcessed(row.processed_items);
+          if (typeof row.total_items === 'number') setImportTotal(row.total_items);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [importJobId, isRestoring]);
 
   if (!isAdmin) {
     return <Navigate to="/dashboard" replace />;
@@ -205,23 +242,46 @@ export default function Backup() {
   };
 
   const executeRestore = async () => {
-    if (!backupFile) return;
+    if (!backupFile || !user) return;
 
     setConfirmCleanDialogOpen(false);
     setIsRestoring(true);
     setRestoreResult(null);
+    setImportProgress(0);
+    setImportStatus('queued');
+    setImportProcessed(0);
+    setImportTotal(0);
 
     try {
+      // Create an import job to track progress (0-100%)
+      const { data: job, error: jobError } = await supabase
+        .from('backup_import_jobs')
+        .insert({
+          admin_id: user.id,
+          mode: restoreMode,
+          modules: selectedModules,
+          status: 'queued',
+          progress: 0,
+          total_items: 0,
+          processed_items: 0,
+        })
+        .select('id')
+        .single();
+
+      if (jobError) throw jobError;
+      setImportJobId(job.id);
+
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) throw sessionError;
       const token = sessionData.session?.access_token;
       if (!token) throw new Error('Sessão inválida. Faça login novamente.');
 
       const { data, error } = await supabase.functions.invoke('complete-backup-import', {
-        body: { 
-          backup: backupFile, 
+        body: {
+          backup: backupFile,
           mode: restoreMode,
-          modules: selectedModules
+          modules: selectedModules,
+          job_id: job.id,
         },
         headers: {
           Authorization: `Bearer ${token}`,
@@ -248,10 +308,16 @@ export default function Backup() {
   };
 
   const closeRestoreDialog = () => {
+    if (isRestoring) return;
     setRestoreDialogOpen(false);
     setBackupFile(null);
     setRestoreResult(null);
     setSelectedModules(moduleConfig.map(m => m.key));
+    setImportJobId(null);
+    setImportProgress(0);
+    setImportStatus(null);
+    setImportProcessed(0);
+    setImportTotal(0);
   };
 
   const toggleModule = (key: string) => {
@@ -546,8 +612,24 @@ export default function Backup() {
                 </div>
               )}
 
+              {isRestoring && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Progresso:</span>
+                    <span className="font-medium">{importProgress}%</span>
+                  </div>
+                  <Progress value={importProgress} />
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Status: {importStatus || '...'} </span>
+                    <span>
+                      {importTotal > 0 ? `${importProcessed}/${importTotal}` : ''}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <DialogFooter>
-                <Button variant="outline" onClick={closeRestoreDialog}>
+                <Button variant="outline" onClick={closeRestoreDialog} disabled={isRestoring}>
                   Cancelar
                 </Button>
                 <Button 
@@ -555,7 +637,7 @@ export default function Backup() {
                   disabled={isRestoring || selectedModules.length === 0}
                   variant={restoreMode === 'replace' ? 'destructive' : 'default'}
                 >
-                  {isRestoring ? 'Importando...' : restoreMode === 'replace' ? 'Limpar e Importar' : 'Importar'}
+                  {isRestoring ? `Importando... ${importProgress}%` : restoreMode === 'replace' ? 'Limpar e Importar' : 'Importar'}
                 </Button>
               </DialogFooter>
             </>

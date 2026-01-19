@@ -52,9 +52,11 @@ serve(async (req) => {
 
     const { backup, mode, modules, jobId } = await req.json();
     
-    console.log(`Importing complete backup by admin: ${user.email}, mode: ${mode}, jobId: ${jobId}`);
+    console.log(`=== IMPORT STARTED ===`);
+    console.log(`Admin: ${user.email}, Mode: ${mode}, JobId: ${jobId}`);
     console.log(`Backup keys:`, Object.keys(backup || {}));
     console.log(`Data keys:`, Object.keys(backup?.data || {}));
+    console.log(`Stats:`, JSON.stringify(backup?.stats || {}));
     
     // Accept multiple backup formats - be very flexible
     const hasValidData = backup && backup.data && typeof backup.data === 'object';
@@ -127,25 +129,31 @@ serve(async (req) => {
     const totalItems = calculateTotalItems();
     let processedItems = 0;
 
+    console.log(`Total items to process: ${totalItems}`);
+
     // Update progress in database
     const updateProgress = async (status: string = 'processing') => {
       if (!jobId) return;
       
       const progress = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
       
-      await supabase
-        .from('backup_import_jobs')
-        .update({
-          status,
-          progress,
-          processed_items: processedItems,
-          total_items: totalItems,
-          restored: results.restored,
-          warnings: results.warnings,
-          errors: results.errors,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', jobId);
+      try {
+        await supabase
+          .from('backup_import_jobs')
+          .update({
+            status,
+            progress,
+            processed_items: processedItems,
+            total_items: totalItems,
+            restored: results.restored,
+            warnings: results.warnings.slice(-50), // Keep last 50 warnings
+            errors: results.errors.slice(-50), // Keep last 50 errors
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', jobId);
+      } catch (e) {
+        console.error('Failed to update progress:', e);
+      }
     };
 
     // Initialize job
@@ -168,9 +176,30 @@ serve(async (req) => {
       .eq('id', user.id)
       .single();
 
+    // Create mapping objects
+    const emailToSellerId = new Map<string, string>();
+    const serverNameToId = new Map<string, string>();
+    const planNameToId = new Map<string, string>();
+    const clientIdentifierToId = new Map<string, string>();
+    const extAppNameToId = new Map<string, string>();
+    const templateNameToId = new Map<string, string>();
+    const panelNameToId = new Map<string, string>();
+
+    // Add current admin to mapping
+    if (currentAdminProfile) {
+      emailToSellerId.set(currentAdminProfile.email, user.id);
+      console.log(`Admin mapped: ${currentAdminProfile.email} -> ${user.id}`);
+    }
+
+    // Helper to check if module should be imported
+    const shouldImport = (moduleName: string) => {
+      if (!modules || modules.length === 0) return true;
+      return modules.includes(moduleName);
+    };
+
     // If mode is 'replace', delete ALL existing data except current admin
     if (mode === 'replace') {
-      console.log('Cleaning database (preserving admin)...');
+      console.log('=== CLEANING DATABASE (preserving admin) ===');
       
       // Get all seller IDs (excluding admin)
       const { data: sellerProfiles } = await supabase
@@ -236,51 +265,64 @@ serve(async (req) => {
       console.log('Database cleaned');
     }
 
-    // Create mapping objects
-    const emailToSellerId = new Map<string, string>();
-    const serverNameToId = new Map<string, string>();
-    const planNameToId = new Map<string, string>();
-    const clientIdentifierToId = new Map<string, string>();
-    const extAppNameToId = new Map<string, string>();
-    const templateNameToId = new Map<string, string>();
-    const panelNameToId = new Map<string, string>();
-
-    // Helper to check if module should be imported
-    const shouldImport = (moduleName: string) => {
-      if (!modules || modules.length === 0) return true;
-      return modules.includes(moduleName);
-    };
-
-    // Add current admin to mapping (so their data can be imported)
-    if (currentAdminProfile) {
-      emailToSellerId.set(currentAdminProfile.email, user.id);
-    }
-
     // Step 1: Create profiles (sellers)
     if (shouldImport('profiles') && backup.data.profiles?.length > 0) {
-      console.log('Creating profiles...');
+      console.log(`=== IMPORTING PROFILES (${backup.data.profiles.length}) ===`);
       let count = 0;
       
       for (const profile of backup.data.profiles) {
-        // Skip if email already exists
-        const { data: existing } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', profile.email)
-          .single();
+        // Profile email is the identifier
+        const profileEmail = profile.email;
         
-        if (existing) {
-          emailToSellerId.set(profile.email, existing.id);
-          results.warnings.push(`Perfil ${profile.email} já existe, mapeando ID existente`);
+        if (!profileEmail) {
+          results.warnings.push(`Perfil sem email, ignorando`);
           processedItems++;
           continue;
         }
         
-        // Create auth user first
+        // Check if this profile already exists
+        const { data: existing } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .eq('email', profileEmail)
+          .single();
+        
+        if (existing) {
+          // Profile already exists, just map it
+          emailToSellerId.set(profileEmail, existing.id);
+          console.log(`Profile exists: ${profileEmail} -> ${existing.id}`);
+          
+          // If mode is replace and it's not the admin, update the profile data
+          if (mode === 'replace' && existing.id !== user.id) {
+            await supabase
+              .from('profiles')
+              .update({
+                full_name: profile.full_name,
+                whatsapp: profile.whatsapp,
+                company_name: profile.company_name,
+                pix_key: profile.pix_key,
+                is_active: profile.is_active,
+                is_permanent: profile.is_permanent,
+                subscription_expires_at: profile.subscription_expires_at,
+                notification_days_before: profile.notification_days_before,
+                tutorial_visto: profile.tutorial_visto,
+                needs_password_update: profile.needs_password_update,
+              })
+              .eq('id', existing.id);
+            count++;
+          }
+          processedItems++;
+          continue;
+        }
+        
+        // Create new auth user
+        console.log(`Creating new user: ${profileEmail}`);
+        const randomPassword = Math.random().toString(36).slice(-12) + 'A1!';
+        
         const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
-          email: profile.email,
+          email: profileEmail,
           email_confirm: true,
-          password: Math.random().toString(36).slice(-12) + 'A1!',
+          password: randomPassword,
           user_metadata: {
             full_name: profile.full_name,
             whatsapp: profile.whatsapp,
@@ -288,15 +330,17 @@ serve(async (req) => {
         });
         
         if (authError) {
-          results.errors.push(`Falha ao criar usuário ${profile.email}: ${authError.message}`);
+          console.error(`Failed to create user ${profileEmail}: ${authError.message}`);
+          results.errors.push(`Falha ao criar usuário ${profileEmail}: ${authError.message}`);
           processedItems++;
           continue;
         }
         
-        emailToSellerId.set(profile.email, authUser.user.id);
+        emailToSellerId.set(profileEmail, authUser.user.id);
+        console.log(`New user created: ${profileEmail} -> ${authUser.user.id}`);
         
         // Update profile with additional data
-        await supabase
+        const { error: updateError } = await supabase
           .from('profiles')
           .update({
             company_name: profile.company_name,
@@ -306,28 +350,42 @@ serve(async (req) => {
             subscription_expires_at: profile.subscription_expires_at,
             notification_days_before: profile.notification_days_before,
             tutorial_visto: profile.tutorial_visto,
-            needs_password_update: profile.needs_password_update,
+            needs_password_update: true, // Force password update
           })
           .eq('id', authUser.user.id);
+        
+        if (updateError) {
+          console.error(`Failed to update profile ${profileEmail}: ${updateError.message}`);
+        }
         
         count++;
         processedItems++;
       }
       
       results.restored.profiles = count;
+      console.log(`Profiles imported: ${count}, Mapped emails: ${emailToSellerId.size}`);
       await updateProgress();
     }
 
+    // Log current email mappings
+    console.log(`=== EMAIL MAPPINGS (${emailToSellerId.size}) ===`);
+    emailToSellerId.forEach((id, email) => {
+      console.log(`  ${email} -> ${id}`);
+    });
+
     // Step 2: Create servers
     if (shouldImport('servers') && backup.data.servers?.length > 0) {
-      console.log('Creating servers...');
+      console.log(`=== IMPORTING SERVERS (${backup.data.servers.length}) ===`);
       let count = 0;
+      let skipped = 0;
       
       for (const server of backup.data.servers) {
         const sellerEmail = getSellerEmail(server);
         const sellerId = emailToSellerId.get(sellerEmail || '');
+        
         if (!sellerId) {
-          results.warnings.push(`Servidor "${server.name}": vendedor ${sellerEmail} não encontrado`);
+          console.log(`Server "${server.name}": seller ${sellerEmail} not found in mappings`);
+          skipped++;
           processedItems++;
           continue;
         }
@@ -338,23 +396,24 @@ serve(async (req) => {
             seller_id: sellerId,
             name: server.name,
             panel_url: server.panel_url,
-            monthly_cost: server.monthly_cost,
+            monthly_cost: server.monthly_cost || 0,
             is_credit_based: server.is_credit_based,
-            total_credits: server.total_credits,
-            used_credits: server.used_credits,
-            credit_price: server.credit_price,
-            credit_value: server.credit_value,
-            iptv_per_credit: server.iptv_per_credit,
-            p2p_per_credit: server.p2p_per_credit,
-            total_screens_per_credit: server.total_screens_per_credit,
+            total_credits: server.total_credits || 0,
+            used_credits: server.used_credits || 0,
+            credit_price: server.credit_price || 0,
+            credit_value: server.credit_value || 0,
+            iptv_per_credit: server.iptv_per_credit || 0,
+            p2p_per_credit: server.p2p_per_credit || 0,
+            total_screens_per_credit: server.total_screens_per_credit || 0,
             icon_url: server.icon_url,
             notes: server.notes,
-            is_active: server.is_active,
+            is_active: server.is_active !== false,
           })
           .select('id')
           .single();
         
         if (error) {
+          console.error(`Server "${server.name}": ${error.message}`);
           results.errors.push(`Servidor "${server.name}": ${error.message}`);
         } else {
           serverNameToId.set(`${sellerEmail}|${server.name}`, inserted.id);
@@ -364,18 +423,23 @@ serve(async (req) => {
       }
       
       results.restored.servers = count;
+      if (skipped > 0) results.skipped.servers = skipped;
+      console.log(`Servers imported: ${count}, skipped: ${skipped}`);
       await updateProgress();
     }
 
     // Step 3: Create plans
     if (shouldImport('plans') && backup.data.plans?.length > 0) {
-      console.log('Creating plans...');
+      console.log(`=== IMPORTING PLANS (${backup.data.plans.length}) ===`);
       let count = 0;
+      let skipped = 0;
       
       for (const plan of backup.data.plans) {
         const sellerEmail = getSellerEmail(plan);
         const sellerId = emailToSellerId.get(sellerEmail || '');
+        
         if (!sellerId) {
+          skipped++;
           processedItems++;
           continue;
         }
@@ -385,12 +449,12 @@ serve(async (req) => {
           .insert({
             seller_id: sellerId,
             name: plan.name,
-            price: plan.price,
-            duration_days: plan.duration_days,
+            price: plan.price || 0,
+            duration_days: plan.duration_days || 30,
             category: plan.category,
             description: plan.description,
-            screens: plan.screens,
-            is_active: plan.is_active,
+            screens: plan.screens || 1,
+            is_active: plan.is_active !== false,
           })
           .select('id')
           .single();
@@ -405,12 +469,14 @@ serve(async (req) => {
       }
       
       results.restored.plans = count;
+      if (skipped > 0) results.skipped.plans = skipped;
+      console.log(`Plans imported: ${count}, skipped: ${skipped}`);
       await updateProgress();
     }
 
     // Step 4: Create external apps
     if (shouldImport('external_apps') && backup.data.external_apps?.length > 0) {
-      console.log('Creating external apps...');
+      console.log(`=== IMPORTING EXTERNAL APPS (${backup.data.external_apps.length}) ===`);
       let count = 0;
       
       for (const app of backup.data.external_apps) {
@@ -426,12 +492,12 @@ serve(async (req) => {
           .insert({
             seller_id: sellerId,
             name: app.name,
-            auth_type: app.auth_type,
-            price: app.price,
-            cost: app.cost,
+            auth_type: app.auth_type || 'email_password',
+            price: app.price || 0,
+            cost: app.cost || 0,
             website_url: app.website_url,
             download_url: app.download_url,
-            is_active: app.is_active,
+            is_active: app.is_active !== false,
           })
           .select('id')
           .single();
@@ -446,12 +512,13 @@ serve(async (req) => {
       }
       
       results.restored.external_apps = count;
+      console.log(`External apps imported: ${count}`);
       await updateProgress();
     }
 
     // Step 5: Create whatsapp templates
     if (shouldImport('whatsapp_templates') && backup.data.whatsapp_templates?.length > 0) {
-      console.log('Creating templates...');
+      console.log(`=== IMPORTING TEMPLATES (${backup.data.whatsapp_templates.length}) ===`);
       let count = 0;
       
       for (const template of backup.data.whatsapp_templates) {
@@ -475,7 +542,10 @@ serve(async (req) => {
           .single();
         
         if (error) {
-          results.errors.push(`Template "${template.name}": ${error.message}`);
+          // Skip duplicate template errors silently
+          if (!error.message.includes('duplicate')) {
+            results.errors.push(`Template "${template.name}": ${error.message}`);
+          }
         } else {
           templateNameToId.set(`${sellerEmail}|${template.name}`, inserted.id);
           count++;
@@ -484,12 +554,13 @@ serve(async (req) => {
       }
       
       results.restored.whatsapp_templates = count;
+      console.log(`Templates imported: ${count}`);
       await updateProgress();
     }
 
     // Step 6: Create shared panels
     if (shouldImport('shared_panels') && backup.data.shared_panels?.length > 0) {
-      console.log('Creating shared panels...');
+      console.log(`=== IMPORTING SHARED PANELS (${backup.data.shared_panels.length}) ===`);
       let count = 0;
       
       for (const panel of backup.data.shared_panels) {
@@ -505,9 +576,9 @@ serve(async (req) => {
           .insert({
             seller_id: sellerId,
             name: panel.name,
-            panel_type: panel.panel_type,
-            monthly_cost: panel.monthly_cost,
-            total_slots: panel.total_slots,
+            panel_type: panel.panel_type || 'unified',
+            monthly_cost: panel.monthly_cost || 0,
+            total_slots: panel.total_slots || 0,
             used_slots: panel.used_slots || 0,
             used_iptv_slots: panel.used_iptv_slots || 0,
             used_p2p_slots: panel.used_p2p_slots || 0,
@@ -518,7 +589,7 @@ serve(async (req) => {
             iptv_per_credit: panel.iptv_per_credit,
             p2p_per_credit: panel.p2p_per_credit,
             notes: panel.notes,
-            is_active: panel.is_active,
+            is_active: panel.is_active !== false,
           })
           .select('id')
           .single();
@@ -538,6 +609,7 @@ serve(async (req) => {
 
     // Step 7: Create other independent tables
     if (shouldImport('client_categories') && backup.data.client_categories?.length > 0) {
+      console.log(`=== IMPORTING CATEGORIES (${backup.data.client_categories.length}) ===`);
       let count = 0;
       for (const cat of backup.data.client_categories) {
         const sellerEmail = getSellerEmail(cat);
@@ -574,13 +646,13 @@ serve(async (req) => {
             seller_id: sellerId,
             code: coupon.code,
             name: coupon.name,
-            discount_type: coupon.discount_type,
-            discount_value: coupon.discount_value,
+            discount_type: coupon.discount_type || 'fixed',
+            discount_value: coupon.discount_value || 0,
             min_plan_value: coupon.min_plan_value,
             max_uses: coupon.max_uses,
             current_uses: coupon.current_uses || 0,
             expires_at: coupon.expires_at,
-            is_active: coupon.is_active,
+            is_active: coupon.is_active !== false,
           });
         
         if (!error) count++;
@@ -591,6 +663,7 @@ serve(async (req) => {
     }
 
     if (shouldImport('bills_to_pay') && backup.data.bills_to_pay?.length > 0) {
+      console.log(`=== IMPORTING BILLS (${backup.data.bills_to_pay.length}) ===`);
       let count = 0;
       for (const bill of backup.data.bills_to_pay) {
         const sellerEmail = getSellerEmail(bill);
@@ -605,7 +678,7 @@ serve(async (req) => {
           .insert({
             seller_id: sellerId,
             description: bill.description,
-            amount: bill.amount,
+            amount: bill.amount || 0,
             due_date: bill.due_date,
             recipient_name: bill.recipient_name,
             recipient_pix: bill.recipient_pix,
@@ -640,7 +713,7 @@ serve(async (req) => {
             icon: product.icon,
             download_url: product.download_url,
             downloader_code: product.downloader_code,
-            is_active: product.is_active,
+            is_active: product.is_active !== false,
           });
         
         if (!error) count++;
@@ -668,13 +741,13 @@ serve(async (req) => {
             seller_id: sellerId,
             server_id: serverId,
             name: app.name,
-            app_type: app.app_type,
+            app_type: app.app_type || 'other',
             download_url: app.download_url,
             downloader_code: app.downloader_code,
             website_url: app.website_url,
             icon: app.icon,
             notes: app.notes,
-            is_active: app.is_active,
+            is_active: app.is_active !== false,
           });
         
         if (!error) count++;
@@ -686,13 +759,17 @@ serve(async (req) => {
 
     // Step 9: Create clients (depends on plans, servers)
     if (shouldImport('clients') && backup.data.clients?.length > 0) {
-      console.log('Creating clients...');
+      console.log(`=== IMPORTING CLIENTS (${backup.data.clients.length}) ===`);
       let count = 0;
+      let skipped = 0;
       
       for (const client of backup.data.clients) {
         const sellerEmail = getSellerEmail(client);
         const sellerId = emailToSellerId.get(sellerEmail || '');
+        
         if (!sellerId) {
+          console.log(`Client "${client.name}": seller ${sellerEmail} not found`);
+          skipped++;
           processedItems++;
           continue;
         }
@@ -715,7 +792,7 @@ serve(async (req) => {
             password_2: client.password_2,
             plan_id: planId || null,
             plan_name: client.plan_name,
-            plan_price: client.plan_price,
+            plan_price: client.plan_price || 0,
             server_id: serverId || null,
             server_name: client.server_name,
             server_id_2: serverId2,
@@ -729,7 +806,7 @@ serve(async (req) => {
             dns: client.dns,
             category: client.category,
             telegram: client.telegram,
-            pending_amount: client.pending_amount,
+            pending_amount: client.pending_amount || 0,
             expected_payment_date: client.expected_payment_date,
             additional_servers: client.additional_servers,
             gerencia_app_mac: client.gerencia_app_mac,
@@ -756,6 +833,8 @@ serve(async (req) => {
       }
       
       results.restored.clients = count;
+      if (skipped > 0) results.skipped.clients = skipped;
+      console.log(`Clients imported: ${count}, skipped: ${skipped}`);
       await updateProgress();
     }
 
@@ -778,7 +857,7 @@ serve(async (req) => {
             seller_id: sellerId,
             client_id: clientId,
             panel_id: panelId,
-            slot_type: pc.slot_type,
+            slot_type: pc.slot_type || 'unified',
           });
         
         if (!error) count++;
@@ -789,6 +868,7 @@ serve(async (req) => {
     }
 
     if (shouldImport('client_external_apps') && backup.data.client_external_apps?.length > 0) {
+      console.log(`=== IMPORTING CLIENT EXTERNAL APPS (${backup.data.client_external_apps.length}) ===`);
       let count = 0;
       for (const cea of backup.data.client_external_apps) {
         const sellerEmail = getSellerEmail(cea);
@@ -821,6 +901,7 @@ serve(async (req) => {
     }
 
     if (shouldImport('client_premium_accounts') && backup.data.client_premium_accounts?.length > 0) {
+      console.log(`=== IMPORTING PREMIUM ACCOUNTS (${backup.data.client_premium_accounts.length}) ===`);
       let count = 0;
       for (const cpa of backup.data.client_premium_accounts) {
         const sellerEmail = getSellerEmail(cpa);
@@ -839,7 +920,7 @@ serve(async (req) => {
             plan_name: cpa.plan_name,
             email: cpa.email,
             password: cpa.password,
-            price: cpa.price,
+            price: cpa.price || 0,
             expiration_date: cpa.expiration_date,
             notes: cpa.notes,
           });
@@ -869,8 +950,8 @@ serve(async (req) => {
             seller_id: sellerId,
             referrer_client_id: referrerId,
             referred_client_id: referredId,
-            discount_percentage: ref.discount_percentage,
-            status: ref.status,
+            discount_percentage: ref.discount_percentage || 0,
+            status: ref.status || 'pending',
             completed_at: ref.completed_at,
           });
         
@@ -882,6 +963,7 @@ serve(async (req) => {
     }
 
     if (shouldImport('message_history') && backup.data.message_history?.length > 0) {
+      console.log(`=== IMPORTING MESSAGE HISTORY (${backup.data.message_history.length}) ===`);
       let count = 0;
       for (const msg of backup.data.message_history) {
         const sellerEmail = getSellerEmail(msg);
@@ -900,7 +982,7 @@ serve(async (req) => {
             seller_id: sellerId,
             client_id: clientId,
             phone: msg.phone,
-            message_type: msg.message_type,
+            message_type: msg.message_type || 'manual',
             message_content: msg.message_content,
             template_id: templateId,
             sent_at: msg.sent_at,
@@ -919,6 +1001,7 @@ serve(async (req) => {
 
     // Step 11: Monthly profits
     if (shouldImport('monthly_profits') && backup.data.monthly_profits?.length > 0) {
+      console.log(`=== IMPORTING MONTHLY PROFITS (${backup.data.monthly_profits.length}) ===`);
       let count = 0;
       for (const profit of backup.data.monthly_profits) {
         const sellerEmail = getSellerEmail(profit);
@@ -934,11 +1017,11 @@ serve(async (req) => {
             seller_id: sellerId,
             month: profit.month,
             year: profit.year,
-            revenue: profit.revenue,
-            server_costs: profit.server_costs,
-            bills_costs: profit.bills_costs,
-            net_profit: profit.net_profit,
-            active_clients: profit.active_clients,
+            revenue: profit.revenue || 0,
+            server_costs: profit.server_costs || 0,
+            bills_costs: profit.bills_costs || 0,
+            net_profit: profit.net_profit || 0,
+            active_clients: profit.active_clients || 0,
             closed_at: profit.closed_at,
           });
         
@@ -972,19 +1055,22 @@ serve(async (req) => {
         .eq('id', jobId);
     }
 
-    console.log('Import completed:', results);
+    console.log('=== IMPORT COMPLETED ===');
+    console.log('Restored:', JSON.stringify(results.restored));
+    console.log('Errors:', results.errors.length);
+    console.log('Warnings:', results.warnings.length);
 
     return new Response(
       JSON.stringify(results),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('Import error:', error);
+    console.error('=== IMPORT ERROR ===', error);
     
     // Try to update job with error status
     try {
-      const { backup, jobId } = await req.clone().json().catch(() => ({ jobId: null })) as any;
-      if (jobId) {
+      const reqClone = await req.clone().json().catch(() => ({ jobId: null })) as any;
+      if (reqClone?.jobId) {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -996,7 +1082,7 @@ serve(async (req) => {
             errors: [error instanceof Error ? error.message : 'Unknown error'],
             updated_at: new Date().toISOString(),
           })
-          .eq('id', jobId);
+          .eq('id', reqClone.jobId);
       }
     } catch (e) {
       console.error('Failed to update job with error:', e);

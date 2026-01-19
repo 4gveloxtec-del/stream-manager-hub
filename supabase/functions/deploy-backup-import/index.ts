@@ -134,6 +134,9 @@ serve(async (req) => {
     report.imported.profiles = 0;
     report.skipped.profiles = 0;
 
+    // Temporary password for new users (they will need to reset)
+    const tempPassword = 'TempPass123!@#';
+
     for (const profile of profiles) {
       try {
         const oldId = profile.id;
@@ -154,28 +157,68 @@ serve(async (req) => {
           continue;
         }
 
-        // Check if profile already exists by email
-        const { data: existingProfile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', email)
-          .single();
+        // Check if user already exists in auth.users (by email)
+        const { data: existingUsers } = await supabase.auth.admin.listUsers();
+        const existingUser = existingUsers?.users?.find(u => u.email?.toLowerCase() === email);
 
-        if (existingProfile) {
-          // Map old ID to existing profile ID
-          sellerIdMapping.set(oldId, existingProfile.id);
+        if (existingUser) {
+          // User exists, map old ID to existing user ID
+          sellerIdMapping.set(oldId, existingUser.id);
           report.skipped.profiles = (report.skipped.profiles || 0) + 1;
-          console.log(`[Profile] ${email} already exists, mapping ${oldId} -> ${existingProfile.id}`);
+          console.log(`[Profile] ${email} already exists in auth, mapping ${oldId} -> ${existingUser.id}`);
+          
+          // Ensure profile exists for this user
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('id', existingUser.id)
+            .single();
+          
+          if (!existingProfile) {
+            // Create profile for existing auth user
+            await supabase.from('profiles').insert({
+              id: existingUser.id,
+              email: email,
+              full_name: profile.full_name,
+              whatsapp: profile.whatsapp,
+              pix_key: profile.pix_key,
+              company_name: profile.company_name,
+              is_active: profile.is_active ?? true,
+              is_permanent: profile.is_permanent ?? false,
+              subscription_expires_at: profile.subscription_expires_at,
+              tutorial_visto: profile.tutorial_visto ?? false,
+              needs_password_update: true,
+              notification_days_before: profile.notification_days_before ?? 3,
+            });
+          }
           continue;
         }
 
-        // Create new profile with new UUID
-        const newId = crypto.randomUUID();
+        // Create new auth user using Admin API
+        console.log(`[Profile] Creating new auth user for ${email}...`);
         
+        const { data: newUser, error: createUserError } = await supabase.auth.admin.createUser({
+          email: email,
+          password: tempPassword,
+          email_confirm: true, // Auto-confirm email
+          user_metadata: {
+            full_name: profile.full_name,
+          },
+        });
+
+        if (createUserError || !newUser?.user) {
+          report.errors.push(`[profiles] ${email}: ${createUserError?.message || 'Failed to create auth user'}`);
+          continue;
+        }
+
+        const newUserId = newUser.user.id;
+        console.log(`[Profile] Created auth user ${email}: ${newUserId}`);
+
+        // Create profile for the new user
         const { error: insertError } = await supabase
           .from('profiles')
           .insert({
-            id: newId,
+            id: newUserId,
             email: email,
             full_name: profile.full_name,
             whatsapp: profile.whatsapp,
@@ -190,12 +233,21 @@ serve(async (req) => {
           });
 
         if (insertError) {
-          report.errors.push(`[profiles] ${email}: ${insertError.message}`);
-        } else {
-          sellerIdMapping.set(oldId, newId);
-          report.imported.profiles = (report.imported.profiles || 0) + 1;
-          console.log(`[Profile] Created ${email}: ${oldId} -> ${newId}`);
+          report.errors.push(`[profiles] ${email}: profile insert failed - ${insertError.message}`);
+          // Still map the user since auth was created
         }
+
+        // Create user_roles entry as 'seller'
+        await supabase.from('user_roles').insert({
+          user_id: newUserId,
+          role: 'seller',
+        });
+
+        sellerIdMapping.set(oldId, newUserId);
+        report.imported.profiles = (report.imported.profiles || 0) + 1;
+        console.log(`[Profile] Created complete: ${email}: ${oldId} -> ${newUserId}`);
+        report.warnings.push(`Revendedor ${email}: criado com senha temporária (precisa redefinir)`);
+        
       } catch (e) {
         report.errors.push(`[profiles] Error: ${(e as Error).message}`);
       }

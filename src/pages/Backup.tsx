@@ -198,14 +198,23 @@ export default function Backup() {
       try {
         const data = JSON.parse(event.target?.result as string) as CleanBackupData;
         
-        // Accept multiple backup formats
-        const isValidFormat = 
-          data.type === 'complete_clean_backup' || // New format
-          data.version === '3.0-complete-clean' || // Legacy format from other project
-          (data.format === 'clean-logical-keys' && data.data); // Alternative legacy format
+        // Accept multiple backup formats - be very flexible
+        const hasValidData = data && data.data && typeof data.data === 'object';
+        const isNewFormat = data.type === 'complete_clean_backup';
+        const isLegacyV3 = data.version === '3.0-complete-clean';
+        const isCleanLogical = data.format === 'clean-logical-keys';
+        const hasProfiles = data.data?.profiles?.length > 0 || data.data?.clients?.length > 0;
         
-        if (!data.version || !data.data || !isValidFormat) {
-          throw new Error('Formato de backup inválido. Formatos aceitos: complete_clean_backup, 3.0-complete-clean, ou clean-logical-keys.');
+        const isValidFormat = hasValidData && (isNewFormat || isLegacyV3 || isCleanLogical || hasProfiles);
+        
+        if (!isValidFormat) {
+          console.error('Invalid backup format:', { hasValidData, isNewFormat, isLegacyV3, isCleanLogical, hasProfiles, keys: Object.keys(data || {}) });
+          throw new Error('Formato de backup inválido. O arquivo não contém dados válidos para importação.');
+        }
+        
+        // Ensure version is set for Edge Function validation
+        if (!data.version) {
+          data.version = '3.0-complete-clean';
         }
         
         // Normalize legacy format fields

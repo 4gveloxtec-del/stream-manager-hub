@@ -53,17 +53,34 @@ serve(async (req) => {
     const { backup, mode, modules, jobId } = await req.json();
     
     console.log(`Importing complete backup by admin: ${user.email}, mode: ${mode}, jobId: ${jobId}`);
+    console.log(`Backup keys:`, Object.keys(backup || {}));
+    console.log(`Data keys:`, Object.keys(backup?.data || {}));
     
-    // Accept multiple backup formats
-    const isValidFormat = 
-      backup?.type === 'complete_clean_backup' || // New format
-      backup?.version === '3.0-complete-clean' || // Legacy format
-      (backup?.format === 'clean-logical-keys' && backup?.data); // Alternative legacy format
+    // Accept multiple backup formats - be very flexible
+    const hasValidData = backup && backup.data && typeof backup.data === 'object';
+    const isNewFormat = backup?.type === 'complete_clean_backup';
+    const isLegacyV3 = backup?.version === '3.0-complete-clean';
+    const isCleanLogical = backup?.format === 'clean-logical-keys';
+    const hasAnyData = Object.values(backup?.data || {}).some((arr: any) => Array.isArray(arr) && arr.length > 0);
     
-    if (!backup || !isValidFormat) {
+    const isValidFormat = hasValidData && (isNewFormat || isLegacyV3 || isCleanLogical || hasAnyData);
+    
+    console.log(`Validation: hasValidData=${hasValidData}, isNewFormat=${isNewFormat}, isLegacyV3=${isLegacyV3}, isCleanLogical=${isCleanLogical}, hasAnyData=${hasAnyData}`);
+    
+    if (!isValidFormat) {
+      console.error('Invalid backup format');
       return new Response(
         JSON.stringify({ 
-          error: 'Formato de backup inválido. Formatos aceitos: complete_clean_backup, 3.0-complete-clean, ou clean-logical-keys' 
+          error: 'Formato de backup inválido. O arquivo não contém dados válidos para importação.',
+          debug: {
+            hasValidData,
+            isNewFormat,
+            isLegacyV3,
+            isCleanLogical,
+            hasAnyData,
+            backupKeys: Object.keys(backup || {}),
+            dataKeys: Object.keys(backup?.data || {})
+          }
         }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -963,8 +980,33 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error('Import error:', error);
+    
+    // Try to update job with error status
+    try {
+      const { backup, jobId } = await req.clone().json().catch(() => ({ jobId: null })) as any;
+      if (jobId) {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        
+        await supabase
+          .from('backup_import_jobs')
+          .update({
+            status: 'error',
+            errors: [error instanceof Error ? error.message : 'Unknown error'],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', jobId);
+      }
+    } catch (e) {
+      console.error('Failed to update job with error:', e);
+    }
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

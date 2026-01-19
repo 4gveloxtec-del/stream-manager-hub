@@ -3,7 +3,6 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCrypto } from '@/hooks/useCrypto';
 import { useFingerprint } from '@/hooks/useFingerprint';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
-import { useOfflineClients } from '@/hooks/useOfflineClients';
 import { useSentMessages } from '@/hooks/useSentMessages';
 import { useRenewalMutation } from '@/hooks/useRenewalMutation';
 import { useClientValidation } from '@/hooks/useClientValidation';
@@ -47,7 +46,6 @@ import { PlanSelector } from '@/components/PlanSelector';
 import { SharedCreditPicker, SharedCreditSelection } from '@/components/SharedCreditPicker';
 import { DnsFieldsSection, SharedCreditsSection, AppsSection, AdditionalServersSection } from '@/components/client-form';
 import { Badge } from '@/components/ui/badge';
-import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { ClientExternalApps, ClientExternalAppsDisplay } from '@/components/ClientExternalApps';
 import { ClientPremiumAccounts, PremiumAccount } from '@/components/ClientPremiumAccounts';
 import { LazyAccountsDisplay } from '@/components/LazyAccountsDisplay';
@@ -156,7 +154,6 @@ export default function Clients() {
   const { encrypt, decrypt } = useCrypto();
   const { generateFingerprint } = useFingerprint();
   const { isPrivacyMode, maskData } = usePrivacyMode();
-  const { isOffline, lastSync, syncClients: syncOfflineClients, loading: offlineLoading } = useOfflineClients();
   const { isSent, getSentInfo, clearSentMark, sentCount, clearAllSentMarks } = useSentMessages();
   const { renewClient: executeRenewal, isRenewing, isPending: isRenewalPending, calculateNewExpiration } = useRenewalMutation(user?.id);
   const { validateForCreate, validateForUpdate, validateForDelete, acquireLock, releaseLock, isLocked } = useClientValidation();
@@ -1932,12 +1929,6 @@ export default function Clients() {
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Clientes</h1>
             <p className="text-sm text-muted-foreground">Gerencie seus clientes</p>
           </div>
-          <OfflineIndicator 
-            isOffline={isOffline} 
-            lastSync={lastSync} 
-            onSync={syncOfflineClients}
-            syncing={offlineLoading}
-          />
         </div>
 
         <Dialog open={isDialogOpen} onOpenChange={(open) => {

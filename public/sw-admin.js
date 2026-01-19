@@ -1,56 +1,129 @@
-// Service Worker para Painel ADM PWA
-const CACHE_NAME = 'admin-pwa-v1';
-const ADMIN_ASSETS = [
-  '/admin',
-  '/manifest-admin.json',
-  '/admin-icon-192.png',
-  '/admin-icon-512.png'
-];
+// Service Worker Admin - Online Only Mode
+// This SW only handles push notifications - NO CACHING
 
-// Install event - cache admin assets
+const SW_VERSION = 'admin-online-only-v1';
+
+// Install event - clear all existing caches
 self.addEventListener('install', (event) => {
+  console.log('[SW-Admin] Installing online-only service worker...');
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ADMIN_ASSETS);
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          console.log('[SW-Admin] Deleting cache:', cacheName);
+          return caches.delete(cacheName);
+        })
+      );
     })
   );
   self.skipWaiting();
 });
 
-// Activate event - cleanup old caches
+// Activate event - take control and clear any remaining caches
 self.addEventListener('activate', (event) => {
+  console.log('[SW-Admin] Activating online-only service worker...');
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name.startsWith('admin-pwa-') && name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
+    Promise.all([
+      // Clear all caches
+      caches.keys().then((cacheNames) => {
+        return Promise.all(
+          cacheNames.map((cacheName) => caches.delete(cacheName))
+        );
+      }),
+      // Take control of all clients
+      self.clients.claim()
+    ])
   );
-  self.clients.claim();
 });
 
-// Fetch event - network first, fallback to cache
-self.addEventListener('fetch', (event) => {
-  // Only handle admin routes
-  if (!event.request.url.includes('/admin')) {
+// Push notification handling
+self.addEventListener('push', (event) => {
+  console.log('[SW-Admin] Push notification received');
+  
+  let data = {
+    title: 'Painel ADM',
+    body: 'Você tem uma nova notificação',
+    icon: '/admin-icon-192.png',
+    badge: '/admin-icon-192.png',
+    data: { url: '/admin' }
+  };
+
+  try {
+    if (event.data) {
+      const payload = event.data.json();
+      data = {
+        title: payload.title || data.title,
+        body: payload.body || data.body,
+        icon: payload.icon || data.icon,
+        badge: payload.badge || data.badge,
+        data: payload.data || data.data
+      };
+    }
+  } catch (e) {
+    console.log('[SW-Admin] Error parsing push data:', e);
+  }
+
+  const options = {
+    body: data.body,
+    icon: data.icon,
+    badge: data.badge,
+    vibrate: [100, 50, 100],
+    data: data.data,
+    requireInteraction: true,
+    actions: [
+      { action: 'open', title: 'Abrir' },
+      { action: 'close', title: 'Fechar' }
+    ]
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+// Notification click handling
+self.addEventListener('notificationclick', (event) => {
+  console.log('[SW-Admin] Notification clicked');
+  event.notification.close();
+
+  if (event.action === 'close') {
     return;
   }
-  
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Clone response and cache it
-        const responseClone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
-        return response;
-      })
-      .catch(() => {
-        // Fallback to cache
-        return caches.match(event.request);
+
+  const urlToOpen = event.notification.data?.url || '/admin';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        // Try to focus existing window
+        for (const client of clientList) {
+          if (client.url.includes(self.location.origin) && 'focus' in client) {
+            client.navigate(urlToOpen);
+            return client.focus();
+          }
+        }
+        // Open new window if none exists
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(urlToOpen);
+        }
       })
   );
+});
+
+// Fetch event - ALWAYS go to network, never cache
+self.addEventListener('fetch', (event) => {
+  // Let all requests go directly to network - no interception, no caching
+  return;
+});
+
+// Message handling for skipWaiting
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+  if (event.data && event.data.type === 'CLEAR_CACHES') {
+    caches.keys().then((cacheNames) => {
+      cacheNames.forEach((cacheName) => caches.delete(cacheName));
+    });
+  }
 });

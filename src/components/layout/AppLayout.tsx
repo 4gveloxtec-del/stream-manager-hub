@@ -6,7 +6,6 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { useMenuStyle } from '@/hooks/useMenuStyle';
 import { FloatingNotifications } from '@/components/FloatingNotifications';
-import { PendingQueueIndicator } from '@/components/PendingQueueIndicator';
 import { OnboardingTutorial } from '@/components/OnboardingTutorial';
 import { OnboardingProgressBar } from '@/components/OnboardingProgressBar';
 import { useState } from 'react';
@@ -256,7 +255,6 @@ export function AppLayout() {
           style={{ left: sidebarWidth }}
         >
           <div className="flex justify-end gap-1">
-            <PendingQueueIndicator />
             <Button
               variant="outline"
               size="sm"
@@ -277,18 +275,6 @@ export function AppLayout() {
               <Share2 className="h-4 w-4" />
               {!isIconsOnly && <span>Compartilhar</span>}
             </Button>
-          </div>
-        </div>
-      )}
-      
-      {/* Mobile top indicator for pending queue */}
-      {isMobile && (
-        <div className={cn(
-          "fixed left-0 right-0 z-50 p-2 bg-background/80 backdrop-blur-sm border-b border-border",
-          showTrialBanner ? "top-[calc(env(safe-area-inset-top)+2.5rem)]" : "top-[env(safe-area-inset-top)]"
-        )}>
-          <div className="flex justify-end">
-            <PendingQueueIndicator />
           </div>
         </div>
       )}

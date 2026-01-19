@@ -1,71 +1,75 @@
-const CACHE_NAME = 'controle-v4';
-const DATA_CACHE_NAME = 'controle-data-v1';
+// Service Worker - Online Only Mode
+// This SW only handles push notifications - NO CACHING
 
-const STATIC_ASSETS = [
-  '/index.html',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png'
-];
+const SW_VERSION = 'online-only-v1';
 
-// Install event - cache all static assets
+// Install event - clear all existing caches
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
-  // Force activate immediately
-  self.skipWaiting();
-});
-
-// Activate event - clean old caches
-self.addEventListener('activate', (event) => {
+  console.log('[SW] Installing online-only service worker...');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME && name !== DATA_CACHE_NAME)
-          .map((name) => caches.delete(name))
+        cacheNames.map((cacheName) => {
+          console.log('[SW] Deleting cache:', cacheName);
+          return caches.delete(cacheName);
+        })
       );
     })
   );
-  self.clients.claim();
+  self.skipWaiting();
 });
 
-// Push notification event - handle incoming push notifications
+// Activate event - take control and clear any remaining caches
+self.addEventListener('activate', (event) => {
+  console.log('[SW] Activating online-only service worker...');
+  event.waitUntil(
+    Promise.all([
+      // Clear all caches
+      caches.keys().then((cacheNames) => {
+        return Promise.all(
+          cacheNames.map((cacheName) => caches.delete(cacheName))
+        );
+      }),
+      // Take control of all clients
+      self.clients.claim()
+    ])
+  );
+});
+
+// Push notification handling
 self.addEventListener('push', (event) => {
-  console.log('[SW] Push received:', event);
+  console.log('[SW] Push notification received');
   
   let data = {
     title: 'PSControl',
-    body: 'Nova notificação',
+    body: 'Você tem uma nova notificação',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    tag: 'default',
-    data: {}
+    data: { url: '/' }
   };
 
   try {
     if (event.data) {
       const payload = event.data.json();
-      data = { ...data, ...payload };
+      data = {
+        title: payload.title || data.title,
+        body: payload.body || data.body,
+        icon: payload.icon || data.icon,
+        badge: payload.badge || data.badge,
+        data: payload.data || data.data
+      };
     }
-  } catch (error) {
-    console.error('[SW] Error parsing push data:', error);
-    if (event.data) {
-      data.body = event.data.text();
-    }
+  } catch (e) {
+    console.log('[SW] Error parsing push data:', e);
   }
 
   const options = {
     body: data.body,
-    icon: data.icon || '/icon-192.png',
-    badge: data.badge || '/icon-192.png',
-    tag: data.tag || 'default',
-    data: data.data || {},
+    icon: data.icon,
+    badge: data.badge,
     vibrate: [100, 50, 100],
-    requireInteraction: false,
+    data: data.data,
+    requireInteraction: true,
     actions: [
       { action: 'open', title: 'Abrir' },
       { action: 'close', title: 'Fechar' }
@@ -77,136 +81,49 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// Notification click event - handle notification interactions
+// Notification click handling
 self.addEventListener('notificationclick', (event) => {
-  console.log('[SW] Notification clicked:', event);
-  
+  console.log('[SW] Notification clicked');
   event.notification.close();
 
   if (event.action === 'close') {
     return;
   }
 
-  // Open or focus the app
+  const urlToOpen = event.notification.data?.url || '/';
+
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then((clientList) => {
-        // Try to focus an existing window
+        // Try to focus existing window
         for (const client of clientList) {
           if (client.url.includes(self.location.origin) && 'focus' in client) {
+            client.navigate(urlToOpen);
             return client.focus();
           }
         }
-        // Open a new window
-        if (clients.openWindow) {
-          const targetUrl = event.notification.data?.url || '/';
-          return clients.openWindow(targetUrl);
+        // Open new window if none exists
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(urlToOpen);
         }
       })
   );
 });
 
-// Fetch event - Cache first for assets, Network first for API
+// Fetch event - ALWAYS go to network, never cache
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
-  
-  const url = new URL(event.request.url);
-  
-  // Handle navigation requests - network first for index.html (prevents stale app after deploy)
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch('/index.html', { cache: 'no-store' })
-        .then((response) => {
-          if (!response || response.status !== 200) return response;
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put('/index.html', responseClone);
-          });
-          return response;
-        })
-        .catch(() => caches.match('/index.html'))
-    );
-    return;
-  }
-
-  // For JS/CSS/images - Cache first, network fallback
-  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?)$/)) {
-    event.respondWith(
-      caches.match(event.request).then((cached) => {
-        if (cached) {
-          // Return cached, but update in background
-          fetch(event.request).then((response) => {
-            if (response && response.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => {
-                cache.put(event.request, response);
-              });
-            }
-          }).catch(() => {});
-          return cached;
-        }
-        
-        return fetch(event.request).then((response) => {
-          if (!response || response.status !== 200) return response;
-          
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
-          return response;
-        }).catch(() => {
-          return new Response('Offline', { status: 503 });
-        });
-      })
-    );
-    return;
-  }
-
-  // For API requests - Network first, cache fallback
-  if (url.hostname.includes('supabase')) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (!response || response.status !== 200) return response;
-          
-          const responseClone = response.clone();
-          caches.open(DATA_CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
-          return response;
-        })
-        .catch(() => {
-          return caches.match(event.request).then((cached) => {
-            return cached || new Response(JSON.stringify({ error: 'offline' }), {
-              headers: { 'Content-Type': 'application/json' },
-              status: 503
-            });
-          });
-        })
-    );
-    return;
-  }
-
-  // Default - Network first
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (!response || response.status !== 200) return response;
-        
-        const responseClone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
-        return response;
-      })
-      .catch(() => {
-        return caches.match(event.request);
-      })
-  );
+  // Let all requests go directly to network - no interception, no caching
+  return;
 });
 
-// Listen for skip waiting message
+// Message handling for skipWaiting
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+  }
+  if (event.data && event.data.type === 'CLEAR_CACHES') {
+    caches.keys().then((cacheNames) => {
+      cacheNames.forEach((cacheName) => caches.delete(cacheName));
+    });
   }
 });

@@ -14,6 +14,8 @@ import { AdminLayout } from "@/components/layout/AdminLayout";
 import { ExpirationNotificationProvider } from "@/components/ExpirationNotificationProvider";
 import { SystemAccessRequired, AdminOnly, SellerOnly } from "@/components/ProtectedRoute";
 import { AdminProtectedRoute } from "@/components/AdminProtectedRoute";
+import { OnlineRequired } from "@/components/OnlineRequired";
+import { useClearOfflineData } from "@/hooks/useClearOfflineData";
 
 // Lazy load pages for better performance
 const Landing = lazy(() => import("./pages/Landing"));
@@ -214,22 +216,32 @@ const AppRoutes = () => {
   );
 };
 
+// App initialization hook for clearing offline data
+function AppInitializer({ children }: { children: React.ReactNode }) {
+  useClearOfflineData();
+  return <>{children}</>;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <AuthProvider>
-        <PrivacyModeProvider>
-          <MenuStyleProvider>
-            <ExpirationNotificationProvider>
-              <TooltipProvider>
-                <Toaster />
-                <Sonner />
-                <AppRoutes />
-              </TooltipProvider>
-            </ExpirationNotificationProvider>
-          </MenuStyleProvider>
-        </PrivacyModeProvider>
-      </AuthProvider>
+      <OnlineRequired>
+        <AppInitializer>
+          <AuthProvider>
+            <PrivacyModeProvider>
+              <MenuStyleProvider>
+                <ExpirationNotificationProvider>
+                  <TooltipProvider>
+                    <Toaster />
+                    <Sonner />
+                    <AppRoutes />
+                  </TooltipProvider>
+                </ExpirationNotificationProvider>
+              </MenuStyleProvider>
+            </PrivacyModeProvider>
+          </AuthProvider>
+        </AppInitializer>
+      </OnlineRequired>
     </ThemeProvider>
   </QueryClientProvider>
 );

@@ -29,7 +29,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { useCrypto } from '@/hooks/useCrypto';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
-import { useOfflineQueue } from '@/hooks/useOfflineQueue';
 import { useSentMessages } from '@/hooks/useSentMessages';
 
 interface Client {
@@ -97,7 +96,6 @@ export function SendMessageDialog({ client, open, onOpenChange, onMessageSent }:
   const queryClient = useQueryClient();
   const { decrypt } = useCrypto();
   const { isPrivacyMode } = usePrivacyMode();
-  const { addToQueue } = useOfflineQueue();
   const { markAsSent, isSent, getSentInfo } = useSentMessages();
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [message, setMessage] = useState('');
@@ -105,7 +103,6 @@ export function SendMessageDialog({ client, open, onOpenChange, onMessageSent }:
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [durationFilter, setDurationFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [isSendingViaApi, setIsSendingViaApi] = useState(false);
   
   // Use refs to cache decrypted credentials per client - avoids re-decrypting on every open
@@ -123,20 +120,6 @@ export function SendMessageDialog({ client, open, onOpenChange, onMessageSent }:
   // Get cached credentials or null
   const decryptedCredentials = credentialsCache[client.id] || null;
   const decryptedPremiumAccounts = premiumAccountsCache[client.id] || [];
-
-  // Monitor online/offline status
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   // Decrypt credentials in background - doesn't block dialog opening
   useEffect(() => {
@@ -680,26 +663,13 @@ export function SendMessageDialog({ client, open, onOpenChange, onMessageSent }:
     const templateName = selectedTemplate ? templates.find(t => t.id === selectedTemplate)?.name : undefined;
     const phone = platform === 'telegram' ? (client.telegram || '') : (client.phone || '');
 
-    // If offline, add to queue and open messaging app
-    if (isOffline) {
-      addToQueue({
-        client_id: client.id,
-        client_name: client.name,
-        template_id: selectedTemplate || null,
-        message_type: messageType,
-        message_content: message,
-        phone,
-        platform,
-      });
-    } else {
-      // Save to history when online
-      await saveHistoryMutation.mutateAsync({
-        message_content: message,
-        template_id: selectedTemplate || null,
-      });
-    }
+    // Always save to history (online-only mode)
+    await saveHistoryMutation.mutateAsync({
+      message_content: message,
+      template_id: selectedTemplate || null,
+    });
 
-    // Mark as sent (works offline too - stored in localStorage)
+    // Mark as sent
     // Pass templateType for loyalty/referral tracking
     markAsSent(client.id, templateName, platform, messageType);
 
@@ -708,7 +678,7 @@ export function SendMessageDialog({ client, open, onOpenChange, onMessageSent }:
       const phoneNumber = client.phone.replace(/\D/g, '');
       const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
       window.open(url, '_blank');
-      toast.success(isOffline ? 'WhatsApp aberto (histórico será salvo quando online)' : 'Mensagem enviada via WhatsApp!');
+      toast.success('Mensagem enviada via WhatsApp!');
     } else if (platform === 'telegram' && client.telegram) {
       // Open Telegram
       const username = client.telegram.replace('@', '');
@@ -716,7 +686,7 @@ export function SendMessageDialog({ client, open, onOpenChange, onMessageSent }:
       window.open(url, '_blank');
       // Copy message to clipboard for Telegram
       navigator.clipboard.writeText(message);
-      toast.success(isOffline ? 'Telegram aberto (histórico será salvo quando online)' : 'Telegram aberto e mensagem copiada!');
+      toast.success('Telegram aberto e mensagem copiada!');
     } else {
       toast.error(`${platform === 'whatsapp' ? 'Telefone' : 'Telegram'} não configurado para este cliente`);
       return;

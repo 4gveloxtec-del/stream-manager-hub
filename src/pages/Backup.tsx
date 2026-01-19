@@ -297,7 +297,27 @@ export default function Backup() {
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        let message = (error as any)?.message || 'Erro ao restaurar backup';
+
+        // Try to extract JSON/text body returned by the function for a clearer message
+        try {
+          const response: Response | undefined = (error as any)?.context?.response;
+          if (response) {
+            const text = await response.text();
+            try {
+              const json = JSON.parse(text);
+              message = json?.error || json?.message || message;
+            } catch {
+              if (text) message = text;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        throw new Error(message);
+      }
 
       setRestoreResult(data);
 

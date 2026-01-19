@@ -38,34 +38,39 @@ serve(async (req) => {
   try {
     console.log(`=== COMPLETE-BACKUP-IMPORT STARTED ===`);
     
-    // Verify admin
+    // Verify admin using getClaims for proper JWT validation
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      console.error('No authorization header');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.error('No authorization header or invalid format');
       return new Response(
-        JSON.stringify({ error: 'Authorization required' }),
+        JSON.stringify({ error: 'Sessão expirada. Faça login novamente.' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
-    if (authError || !user) {
-      console.error('Auth error:', authError?.message);
+    // Use getClaims for JWT verification (recommended approach)
+    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+    
+    if (claimsError || !claimsData?.claims) {
+      console.error('JWT validation failed:', claimsError?.message);
       return new Response(
-        JSON.stringify({ error: 'Invalid authentication' }),
+        JSON.stringify({ error: 'Sessão inválida ou expirada. Faça login novamente.' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`User authenticated: ${user.email}`);
+    const userId = claimsData.claims.sub;
+    const userEmail = claimsData.claims.email;
+    
+    console.log(`User authenticated via getClaims: ${userEmail} (${userId})`);
 
     // Check if user is admin (robust: tolerate duplicates / missing single-row)
     const { data: roleRows, error: roleError } = await supabase
       .from('user_roles')
       .select('role')
-      .eq('user_id', user.id);
+      .eq('user_id', userId);
 
     if (roleError) {
       console.error('Failed to load user role:', roleError.message);
@@ -112,10 +117,8 @@ serve(async (req) => {
       payloadBytes = 0;
     }
 
-    console.log(`[meta] jobId=${jobId} mode=${mode} modules=${Array.isArray(modules) ? modules.length : 'all'} payloadBytes=${payloadBytes} startedAt=${startedAt}`);
-    
     console.log(`=== IMPORT CONFIG ===`);
-    console.log(`Admin: ${user.email}, Mode: ${mode}, JobId: ${jobId}`);
+    console.log(`Admin: ${userEmail}, Mode: ${mode}, JobId: ${jobId}`);
     console.log(`Backup keys:`, Object.keys(backup || {}));
     console.log(`Data keys:`, Object.keys(backup?.data || {}));
     
@@ -315,7 +318,7 @@ serve(async (req) => {
     const { data: currentAdminProfile } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', user.id)
+      .eq('id', userId)
       .single();
 
     // Create mapping objects
@@ -331,9 +334,9 @@ serve(async (req) => {
 
     // Add current admin to mapping
     if (currentAdminProfile) {
-      emailToSellerId.set(currentAdminProfile.email, user.id);
-      sellerIdToEmail.set(user.id, currentAdminProfile.email);
-      console.log(`Admin mapped: ${currentAdminProfile.email} -> ${user.id}`);
+      emailToSellerId.set(currentAdminProfile.email, userId);
+      sellerIdToEmail.set(userId, currentAdminProfile.email);
+      console.log(`Admin mapped: ${currentAdminProfile.email} -> ${userId}`);
     }
 
 
@@ -351,7 +354,7 @@ serve(async (req) => {
       const { data: sellerProfiles } = await supabase
         .from('profiles')
         .select('id')
-        .neq('id', user.id);
+        .neq('id', userId);
       
       const sellerIds = sellerProfiles?.map((p: any) => p.id) || [];
       
@@ -440,7 +443,7 @@ serve(async (req) => {
            console.log(`Profile exists: ${profileEmail} -> ${existing.id}`);
            
            // If mode is replace and it's not the admin, update the profile data
-           if (mode === 'replace' && existing.id !== user.id) {
+           if (mode === 'replace' && existing.id !== userId) {
              await supabase
                .from('profiles')
                .update({

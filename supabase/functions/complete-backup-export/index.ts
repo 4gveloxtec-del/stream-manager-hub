@@ -17,30 +17,36 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    // Verify admin
+    // Verify admin using getClaims for proper JWT validation
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return new Response(
-        JSON.stringify({ error: 'Authorization required' }),
+        JSON.stringify({ error: 'Sessão expirada. Faça login novamente.' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
-    if (authError || !user) {
+    // Use getClaims for JWT verification (recommended approach)
+    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+    
+    if (claimsError || !claimsData?.claims) {
+      console.error('JWT validation failed:', claimsError?.message);
       return new Response(
-        JSON.stringify({ error: 'Invalid authentication' }),
+        JSON.stringify({ error: 'Sessão inválida ou expirada. Faça login novamente.' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const userId = claimsData.claims.sub;
+    const userEmail = claimsData.claims.email;
 
     // Check if user is admin (robust: tolerate duplicates / missing single-row)
     const { data: roleRows, error: roleError } = await supabase
       .from('user_roles')
       .select('role')
-      .eq('user_id', user.id);
+      .eq('user_id', userId);
 
     if (roleError) {
       console.error('Failed to load user role:', roleError.message);
@@ -59,7 +65,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Creating complete clean backup by admin: ${user.email}`);
+    console.log(`Creating complete clean backup by admin: ${userEmail}`);
 
     // Fetch ALL data from all tables
     const [
@@ -458,7 +464,7 @@ serve(async (req) => {
       version: "2.0",
       type: "complete_clean_backup",
       exported_at: new Date().toISOString(),
-      exported_by: user.email,
+      exported_by: userEmail,
       data: {
         profiles: transformedProfiles,
         clients: transformedClients,
